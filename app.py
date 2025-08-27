@@ -1,6 +1,7 @@
 from db_handler import DBHandler
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -40,6 +41,76 @@ def get_all_bulletin_messages():
             'result': [],
             'success': False
         }), 400
+
+@app.route('/api/get_bulletin_messages_by_date', methods=['GET'])
+def get_bulletin_messages_by_date():
+    try:
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({
+                'status': 400, 
+                'message': "必須提供 'date' 查詢參數 (格式: YYYY-MM-DD)", 
+                'result': [],
+                'success': False
+            }), 400
+
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()       
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 10, type=int)
+        offset = (page - 1) * page_size
+        bulletins = db.get_bulletin_messages_by_date(target_date, page_size, offset)
+        
+        return jsonify({
+            'status': 200,
+            'message': "success",
+            'result': bulletins,
+            'success': True
+        }), 200
+    except ValueError:
+        return jsonify({
+            'status': 400, 
+            'message': "日期格式錯誤，請使用 YYYY-MM-DD",
+            'result': [], 
+            'success': False
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'status': 400,
+            'message': e,
+            'result': [],
+            'success': False
+        }), 400
+
+
+@app.route('/api/get_messages_by_campus_and_department', methods=['GET'])
+def get_messages_by_campus_and_department():
+    """【新路由】處理按校區和系所查詢的請求"""
+    campus = request.args.get('campus')
+    department = request.args.get('department')
+
+    if not campus or not department:
+        return jsonify({'status': 400, 'message': "必須同時提供 'campus' 和 'department' 查詢參數", 'success': False}), 400
+
+    try:
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 10, type=int)
+        offset = (page - 1) * page_size
+        messages = db.get_messages_by_campus_and_department(campus, department, page_size, offset)
+            
+        return jsonify({
+            'status': 200,
+            'message': "success",
+            'result': messages,
+            'success': True
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 400,
+            'message': e,
+            'result': [],
+            'success': False
+        }), 400
+
     
 @app.route('/api/insert_bulletin_message', methods=['POST'])
 def insert_bulletin_message():
@@ -98,6 +169,37 @@ def insert_bulletin_message():
             'message': "伺服器內部發生未預期的錯誤",
             'result': [],
             'success': False}), 500
+    
+@app.route('/api/delete_bulletin_message', methods=['DELETE'])
+def delete_bulletin_message():
+    try:
+        m_id = request.args.get('massage_id')
+        if m_id:
+            res = db.delete_bulletin_message(m_id)
+        else:
+            return jsonify({
+            'status': 400,
+            'message': 'argument m_id was required.',
+            'success': False
+        }), 400
+        if res:
+            return jsonify({
+            'status': 200,
+            'message': f"Meeting {m_id} deleted",
+            'success': True
+        }), 200
+        else:
+            return jsonify({
+            'status': 404,
+            'message': f"Meeting {m_id} already deleted",
+            'success': False
+        }), 404
+    except Exception as e:
+        return jsonify({
+            'status': 400,
+            'message': str(e),
+            'success': False
+        }), 400
 
 if __name__ == "__main__":
     app.run(debug=True, port=5004)

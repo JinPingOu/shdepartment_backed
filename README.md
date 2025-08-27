@@ -116,7 +116,68 @@ meeting_system_backend/
 
 ---
 
-### 3. 新增布告欄訊息
+### 2. 取得某天時間的布告欄訊息
+
+- **方法**：GET
+- **路徑**：`/api/get_bulletin_messages_by_date`
+- **Query 參數**：
+  - `page`（int, 選填，預設 1）：分頁頁碼
+  - `page_size`（int, 選填，預設 10）：每頁筆數
+  - `date`（str, 必填）：要尋找的日子(格式: YYYY-MM-DD)
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "rows": [
+      {
+        "id": 1,
+        "author_name": "路人甲",
+        "content": "我好餓TT",
+        "campus": "義大醫院",
+        "department": "智慧醫療部",
+        "create_at": "2025-08-27 11:57"
+      }
+    ],
+    "total": 100
+  },
+  "success": true
+}
+```
+
+- **功能描述**：取得指定會議的詳細資料與所有章節內容。
+
+---
+
+### 3. 取得單一會議及其章節內容
+
+- **方法**：GET
+- **路徑**：`/api/get_meeting`
+- **Query 參數**：
+  - `meeting_id`（int, 必填）：會議 ID
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "meeting": { ... },
+    "subject": [
+      { "主題": "...", "內容": "..." }
+    ]
+  },
+  "success": true
+}
+```
+
+- **功能描述**：取得指定會議的詳細資料與所有章節內容。
+
+---
+
+### 4. 新增布告欄訊息
 
 - **方法**：POST
 - **路徑**：`/api/insert_bulletin_message`

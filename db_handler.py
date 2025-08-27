@@ -3,6 +3,7 @@ import psycopg2.extras
 import os
 import hashlib
 from dotenv import load_dotenv
+from datetime import date
 
 # 載入 .env 檔案中的環境變數
 load_dotenv()
@@ -134,7 +135,7 @@ class DBHandler:
         if not self.conn: return []
         results = []
         try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 # 使用 ILIKE 進行不分大小寫的模糊比對
                 query = """
                     SELECT
@@ -160,7 +161,7 @@ class DBHandler:
             print(f"搜尋時發生錯誤: {e}")
         return results
 
-    # --- 留言板功能 ---
+    # --- 留言板CURD ---
     def create_bulletin_message(self, author_name, content, department=None, campus=None):
         if not self.conn: return None
         if not content or not content.strip():
@@ -203,6 +204,50 @@ class DBHandler:
                 return{'rows':rows, 'total':total}
         except psycopg2.Error as e:
             print(f"讀取留言時發生錯誤: {e}")
+            return []
+        
+
+    def get_messages_by_date(self, target_date: date, page_size: int, offset: int):
+        """【新功能】根據特定日期 (YYYY-MM-DD) 取得留言"""
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # 使用 ::date 將 TIMESTAMPTZ 轉換為 DATE 型別進行比較
+                sql = """
+                    SELECT id, author_name, content, department, campus, created_at 
+                    FROM guestbook_messages 
+                    WHERE created_at::date = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s;
+                """
+                cur.execute(sql, (target_date, page_size, offset))
+                rows = cur.fetchall()
+                cur.execute("SELECT COUNT(*) FROM bulletin_messages")
+                total = cur.fetchone()['count']
+                return{'rows':rows, 'total':total}
+        except psycopg2.Error as e:
+            print(f"按日期查詢留言時發生錯誤: {e}")
+            return []
+
+    def get_messages_by_campus_and_department(self, campus: str, department: str, page_size: int, offset: int):
+        """【新功能】根據校區和系所取得留言 (兩者皆須提供)"""
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                sql = """
+                    SELECT id, author_name, content, department, campus, created_at 
+                    FROM guestbook_messages 
+                    WHERE campus = %s AND department = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s;;
+                """
+                cur.execute(sql, (campus, department, page_size, offset))
+                rows = cur.fetchall()
+                cur.execute("SELECT COUNT(*) FROM bulletin_messages")
+                total = cur.fetchone()['count']
+                return{'rows':rows, 'total':total}
+        except psycopg2.Error as e:
+            print(f"按校區和系所查詢留言時發生錯誤: {e}")
             return []
         
 
