@@ -185,13 +185,13 @@ def delete_bulletin_message():
         if res:
             return jsonify({
             'status': 200,
-            'message': f"Meeting {m_id} deleted",
+            'message': f"Message {m_id} deleted",
             'success': True
         }), 200
         else:
             return jsonify({
             'status': 404,
-            'message': f"Meeting {m_id} already deleted",
+            'message': f"Message {m_id} already deleted",
             'success': False
         }), 404
     except Exception as e:

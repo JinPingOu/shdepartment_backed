@@ -147,16 +147,19 @@ meeting_system_backend/
 }
 ```
 
-- **功能描述**：取得指定會議的詳細資料與所有章節內容。
+- **功能描述**：取得某天時間的布告欄訊息。
 
 ---
 
-### 3. 取得單一會議及其章節內容
+### 3. 取得某部門的布告欄訊息
 
 - **方法**：GET
 - **路徑**：`/api/get_meeting`
 - **Query 參數**：
-  - `meeting_id`（int, 必填）：會議 ID
+  - `page`（int, 選填，預設 1）：分頁頁碼
+  - `page_size`（int, 選填，預設 10）：每頁筆數
+  - `campus`（str, 必填）：院區
+  - `department`（str, 必填）：部門
 - **回傳格式**：
 
 ```json
@@ -164,16 +167,23 @@ meeting_system_backend/
   "status": 200,
   "message": "success",
   "result": {
-    "meeting": { ... },
-    "subject": [
-      { "主題": "...", "內容": "..." }
-    ]
+    "rows": [
+      {
+        "id": 1,
+        "author_name": "路人甲",
+        "content": "我好餓TT",
+        "campus": "義大醫院",
+        "department": "智慧醫療部",
+        "create_at": "2025-08-27 11:57"
+      }
+    ],
+    "total": 100
   },
   "success": true
 }
 ```
 
-- **功能描述**：取得指定會議的詳細資料與所有章節內容。
+- **功能描述**：取得某部門的布告欄訊息。
 
 ---
 
@@ -198,3 +208,25 @@ meeting_system_backend/
 ```
 
 - **功能描述**：新增布告欄訊息。
+
+---
+
+### 5. 刪除指定布告欄訊息
+
+- **方法**：DELETE
+- **路徑**：`/api/meetings/delete_bulletin_message`
+- **Query 參數**：
+  - `message_id`（int, 必填）：訊息 ID
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "Message {message_id} deleted",
+  "success": true
+}
+```
+
+- **功能描述**：刪除指定的會議記錄。
+
+---
