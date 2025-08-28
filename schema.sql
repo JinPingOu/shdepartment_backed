@@ -23,9 +23,10 @@ CREATE TABLE users (
 CREATE TABLE categories (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
-    category_type category_enum NOT NULL, 
+    category_type category_enum NOT NULL
     
 );
+
 -- 標籤資料表
 CREATE TABLE hashtags (
     id SERIAL PRIMARY KEY,
@@ -76,9 +77,3 @@ CREATE TABLE bulletin_messages (
     campus VARCHAR(100),
     created_at TIMESTAMP NOT NULL DEFAULT NOW() -- 留言時間 (對應您的 date 需求)
 );
-
-
--- 建立索引
-CREATE INDEX idx_categories_parent_id ON categories(parent_id);
--- CREATE INDEX idx_posts_title ON posts USING GIN (to_tsvector('chinese', title));
-CREATE INDEX idx_bulletin_created_at ON bulletin_messages(created_at DESC); -- 為留言板時間建立索引

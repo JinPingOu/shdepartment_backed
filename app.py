@@ -185,13 +185,13 @@ def handle_posts():
 @app.route('/api/posts/<int:post_id>', methods=['GET', 'PUT', 'DELETE'])
 def handle_post_by_id(post_id):
     if request.method == 'GET':
-        with DBHandler(DB_CONFIG) as db:
+        with DBHandler() as db:
             post = db.get_post(post_id)
             return jsonify({'status': 200, 'result': post, 'success': True}) if post else jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
 
     @permission_required(['manager', 'editor'])
     def protected_operation():
-        with DBHandler(DB_CONFIG) as db:
+        with DBHandler() as db:
             owner_id = db.get_post_owner(post_id)
             if not owner_id:
                 return jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
@@ -286,7 +286,5 @@ def handle_delete_bulletin_message(message_id):
     with DBHandler() as db:
         success = db.delete_bulletin_message(message_id)
         return jsonify({'status': 200, 'message': "留言刪除成功", 'success': True}) if success else jsonify({'status': 404, 'message': "找不到要刪除的留言", 'success': False}), 404
-
-
 if __name__ == "__main__":
     app.run(debug=True, port=5004)
