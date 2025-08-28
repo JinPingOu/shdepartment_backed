@@ -5,8 +5,7 @@ DROP TYPE IF EXISTS perental_category_type; -- 如果 ENUM 型別已存在，先
 
 -- 建立一個自訂的 ENUM 型別來限制 permission 欄位的值
 CREATE TYPE user_permission AS ENUM ('manager', 'editor', 'viewer');
--- 建立一個 ENUM 型別，只包含允許作為父分類的名稱
-CREATE TYPE parental_category_type AS ENUM ('latest_news', 'instructions');
+CREATE TYPE category_enum AS ENUM ('latest_news', 'instructions'); -- 定義頂層分類的類型
 
 -- 使用者資料表 (增加帳號、密碼雜湊、權限)
 CREATE TABLE users (
@@ -20,29 +19,13 @@ CREATE TABLE users (
     CONSTRAINT chk_account_is_email CHECK (account ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$')
 );
 
--- 分類資料表 (維持階層結構)
--- categories包含父類型('最新消息'/'說明文件')以及子類型(...)
--- 父類型('最新消息'/'說明文件'): parent_id為NULL，但category_type為'latest_news' or 'instructions'
--- 子類型: parent_id指向父類型id，且category_type為NULL
+-- 【新】單一分類資料表
 CREATE TABLE categories (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
-    parent_id INT,
-    -- 只有 '最新消息' 和 '說明文件' 這兩筆資料在這個欄位才會有值
-    category_type parental_category_type,
-    FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL,
+    category_type category_enum NOT NULL, 
     
-    -- 【步驟 3】建立 CHECK 約束，這是實現規則的核心
-    CONSTRAINT chk_parent_is_valid CHECK (
-        -- 每次新增或更新 categories 資料時進行檢查：
-        -- 如果 parent_id 是 NULL (父分類)
-        -- 如果 categories table中有某值的id = 此次更動值的parent_id，且其category_type不為NULL
-        -- (換句話說，子分類的爸爸必須是我們定義的 parental_category_type 之一)
-        parent_id IS NULL OR 
-        (SELECT category_type FROM categories WHERE id = parent_id) IS NOT NULL
-    )
 );
-
 -- 標籤資料表
 CREATE TABLE hashtags (
     id SERIAL PRIMARY KEY,
@@ -68,10 +51,10 @@ CREATE TABLE posts (
 -- 附件資料表
 CREATE TABLE attachments (
     id SERIAL PRIMARY KEY,
-    post_id INT NOT NULL,
+    post_id INT,
     file_path VARCHAR(1024) NOT NULL,
     original_filename VARCHAR(255),
-    file_extension VARCHAR(10),
+    --- file_extension VARCHAR(10),
     FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
 );
 

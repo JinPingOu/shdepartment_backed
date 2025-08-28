@@ -19,43 +19,52 @@ DB_CONFIG = {
 }
 
 class DBHandler:
-    """
-    一個使用上下文管理器 (with 語句) 來安全處理資料庫連線的類別。
-    """
     def __init__(self, config=None):
-        """
-        建構函式：僅儲存設定，不在此處建立連線。
-        """
         self.config = config or DB_CONFIG
         self.conn = None
 
-   
-    def connect(self):
-        if not self.conn or self.conn.closed:
+    def __enter__(self):
+        """進入 'with' 區塊時自動建立連線。"""
+        try:
             self.conn = psycopg2.connect(**self.config)
-        return self.conn
+            return self
+        except psycopg2.OperationalError as e:
+            print(f"錯誤：無法連接到資料庫 '{self.config.get('dbname')}'.\n{e}")
+            raise
 
-    def close(self):
-        if self.conn and not self.conn.closed:
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """離開 'with' 區塊時自動關閉連線。"""
+        if self.conn:
             self.conn.close()
 
-
-    def setup_database(self):
-        self.conn = self.connect()
-        """從 schema.sql 檔案讀取並執行 SQL 腳本"""
-        if not self.conn: return
+    # --- Users Management ---
+    def find_user(self, user_id=None, account=None):
+        """根據 ID 或帳號尋找使用者"""
+        if not user_id and not account: return None
         try:
-            with open('schema.sql', 'r', encoding='utf-8') as f:
-                sql_script = f.read()
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if user_id:
+                    cur.execute("SELECT * FROM users WHERE id = %s;", (user_id,))
+                else:
+                    cur.execute("SELECT * FROM users WHERE account = %s;", (account,))
+                user = cur.fetchone()
+                return dict(user) if user else None
+        except psycopg2.Error as e:
+            print(f"尋找使用者時發生錯誤: {e}")
+            return None
+        
+            
+    def get_user_permission(self, user_id):
+        """取得指定使用者的權限等級"""
+        try:
             with self.conn.cursor() as cur:
-                cur.execute(sql_script)
-            self.conn.commit()
-            print("資料庫資料表已成功從 schema.sql 建立！")
-        except Exception as e:
-            print(f"執行 schema.sql 時發生錯誤: {e}")
-            self.conn.rollback()
+                cur.execute("SELECT permission FROM users WHERE id = %s;", (user_id,))
+                result = cur.fetchone()
+                return result[0] if result else None
+        except psycopg2.Error as e:
+            print(f"獲取權限時發生錯誤: {e}")
+            return None
 
-    # --- 安全性與使用者管理 ---
     def _hash_password(self, password):
         """使用 SHA-256 對密碼進行雜湊"""
         return hashlib.sha256(password.encode()).hexdigest()
@@ -89,6 +98,8 @@ class DBHandler:
             return None
         
     def delete_user(self, user_id):
+        self.conn = self.connect()
+        if not self.conn: return None
         """刪除使用者"""
         try:
             with self.conn.cursor() as cur:
@@ -107,8 +118,10 @@ class DBHandler:
     def find_user(self, user_id=None, account=None):
         """根據 ID 或帳號尋找使用者"""
         if not user_id and not account: return None
+        self.conn = self.connect()
+        if not self.conn: return None
         try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if user_id:
                     cur.execute("SELECT id, name, account, permission, department, campus FROM users WHERE id = %s;", (user_id,))
                 else:
@@ -132,6 +145,9 @@ class DBHandler:
             
         params.append(user_id)
         sql = f"UPDATE users SET {set_clause} WHERE id = %s;"
+
+        self.conn = self.connect()
+        if not self.conn: return None
         
         try:
             with self.conn.cursor() as cur:
@@ -147,116 +163,76 @@ class DBHandler:
             self.conn.rollback()
             return False
 
-    def get_user_permission(self, user_id):
-        self.conn = self.connect()
-        """取得指定使用者的權限等級"""
-        try:
-            user = self.find_user(user_id=user_id)
-            return user['permission'] if user else None
-        except psycopg2.Error as e:
-            print(f"獲取權限時發生錯誤: {e}")
-            return None
         
 
     # --- 分類管理 ---
-    def create_parent_category(self, name: str):
-        """
-        新增一個頂層的父分類 (例如 '最新消息' 或 '說明文件')。
-        這個名稱必須符合我們在資料庫中定義的 ENUM 型別。
-        """
-        if not self.conn: return None
+    # --- 父分類: latest_news、instructions ---
+
+    def insert_category(self, name: str, category_type: str):
         try:
             with self.conn.cursor() as cur:
-                # 在新增時，我們同時填入 name 和 category_type 欄位
                 sql = "INSERT INTO categories (name, category_type) VALUES (%s, %s) RETURNING id;"
-                cur.execute(sql, (name, name))
+                cur.execute(sql, (name, category_type))
                 result = cur.fetchone()
                 if result:
-                    category_id = result[0]
                     self.conn.commit()
-                    print(f"已成功建立父分類 '{name}' (ID: {category_id})")
-                    return category_id
+                    return result[0]
                 return None
         except psycopg2.Error as e:
-            # 如果 name 不符合 ENUM 的定義，資料庫會在這裡報錯
-            print(f"新增父分類 '{name}' 時發生錯誤: {e}")
+            print(f"新增分類時發生錯誤: {e}")
             self.conn.rollback()
             return None
 
-    def create_subcategory(self, name: str, parent_id: int):
-        """
-        在一個合法的父分類底下，新增一個子分類。
-        資料庫的 CHECK 約束會自動驗證 parent_id 是否合法。
-        """
-        if not self.conn: return None
-        try:
-            with self.conn.cursor() as cur:
-                # 我們只需要提供 name 和 parent_id，category_type 保持 NULL
-                sql = "INSERT INTO categories (name, parent_id) VALUES (%s, %s) RETURNING id;"
-                cur.execute(sql, (name, parent_id))
-                result = cur.fetchone()
-                if result:
-                    subcategory_id = result[0]
-                    self.conn.commit()
-                    print(f"已成功在父分類 ID {parent_id} 底下建立子分類 '{name}' (ID: {subcategory_id})")
-                    return subcategory_id
-                return None
-        except psycopg2.Error as e:
-            # 如果 parent_id 不合法，資料庫的 CHECK 約束會觸發錯誤
-            print(f"新增子分類 '{name}' 時發生錯誤: {e}")
-            self.conn.rollback()
-            return None
-        
     def delete_category(self, category_id):
-        """刪除分類 (父或子)"""
         try:
             with self.conn.cursor() as cur:
                 cur.execute("DELETE FROM categories WHERE id = %s;", (category_id,))
-                if cur.rowcount == 0:
-                    print(f"刪除失敗：找不到 ID 為 {category_id} 的分類。")
-                    return False
-            self.conn.commit()
-            print(f"已成功刪除分類 ID: {category_id}")
-            return True
+                if cur.rowcount > 0:
+                    self.conn.commit()
+                    return True
+            return False
         except psycopg2.Error as e:
-            print(f"刪除分類時發生錯誤: {e}")
             self.conn.rollback()
             return False
 
-    def get_subcategories(self, parent_id):
-        """尋找父分類下的所有子分類"""
+    def get_categories_by_type(self, category_type: str):
         try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("SELECT id, name FROM categories WHERE parent_id = %s;", (parent_id,))
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if category_type:
+                    cur.execute("SELECT id, name FROM categories WHERE category_type = %s;", (category_type,))
+                else:
+                    cur.execute("SELECT id, name, category_type FROM categories;")
                 return [dict(row) for row in cur.fetchall()]
         except psycopg2.Error as e:
-            print(f"尋找子分類時發生錯誤: {e}")
+            print(f"尋找分類時發生錯誤: {e}")
             return []
 
     # --- 文章 CRUD ---
-    def create_post(self, user_id, category_id, title, content, **kwargs):
+    def insert_post(self, title, content, user_id, category_id, main_image_url=None, attachments=None, hashtags=None):
         self.conn = self.connect()
-        """新增文章 (只有 manager 和 editor 可以新增)"""
         if not self.conn: return None
-        permission = self.get_user_permission(user_id)
-        if permission not in ['manager', 'editor']:
-            print(f"權限不足：使用者 {user_id} (權限: {permission}) 無法新增文章。")
-            return None
         try:
             with self.conn.cursor() as cur:
-                # 1. 新增 Post
-                sql_post = "INSERT INTO posts (user_id, category_id, title, content) VALUES (%s, %s, %s, %s) RETURNING id;"
-                cur.execute(sql_post, (user_id, category_id, title, content))
-                post_id = cur.fetchone()[0]
+                # 新增 post 主體並取得返回的 post ID
+                post_sql = """
+                    INSERT INTO posts (title, content, user_id, category_id, main_image_url)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id;
+                """
+                cur.execute(post_sql, (title, content, user_id, category_id, main_image_url))
+                
+                result = cur.fetchone()
+                if not result:
+                    raise Exception("新增 Post 後未能取得返回的 ID")
+                post_id = result[0]
 
-                # 2. 處理附件
-                if attachments:
-                    sql_attach = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES (%s, %s, %s);"
-                    attach_data = [(post_id, att['path'], att['name']) for att in attachments]
-                    psycopg2.extras.execute_values(cur, sql_attach, attach_data)
+                # 如果有提供附件，則將它們新增到 attachments 表
+                if attachments and isinstance(attachments, list):
+                    attachment_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES (%s, %s, %s);"
+                    args_list = [(post_id, att.get('path'), att.get('original_filename')) for att in attachments]
+                    psycopg2.extras.execute_values(cur, attachment_sql, args_list)
 
-                # 3. 處理標籤
-                if hashtags:
+                # 處理標籤
+                if hashtags and isinstance(hashtags, list):
                     tag_ids = []
                     for tag_name in hashtags:
                         cur.execute("SELECT id FROM hashtags WHERE tag_name = %s;", (tag_name,))
@@ -281,6 +257,9 @@ class DBHandler:
         
     def delete_post(self, post_id):
         """刪除文章 (關聯的附件和標籤也會自動刪除)"""
+        self.conn = self.connect()
+        """新增文章 (只有 manager 和 editor 可以新增)"""
+        if not self.conn: return None
         try:
             with self.conn.cursor() as cur:
                 cur.execute("DELETE FROM posts WHERE id = %s;", (post_id,))
@@ -295,237 +274,286 @@ class DBHandler:
             self.conn.rollback()
             return False
     def update_post(self, post_id, new_data):
-        """更新文章 (不含附件和標籤)"""
-        fields = ['title', 'content', 'main_image_url', 'category_id']
-        set_clause = ", ".join([f"{key} = %s" for key in new_data if key in fields])
-        params = [new_data[key] for key in new_data if key in fields]
-        
-        if not set_clause: return False
-        params.append(post_id)
-        sql = f"UPDATE posts SET {set_clause}, updated_at = NOW() WHERE id = %s;"
-        
+        """
+        【擴充功能】更新文章，包含文字、主圖、附件和標籤。
+        這是一個完整的交易操作。
+        """
+        if not self.conn: return False
         try:
             with self.conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                if cur.rowcount == 0: return False
+                # 步驟 1: 更新 posts 表中的基本欄位
+                updatable_fields = ['title', 'content', 'main_image_url', 'category_id']
+                set_parts = []
+                params = []
+                for field in updatable_fields:
+                    if field in new_data:
+                        set_parts.append(f"{field} = %s")
+                        params.append(new_data[field])
+                
+                if set_parts:
+                    params.append(post_id)
+                    sql_update_post = f"UPDATE posts SET {', '.join(set_parts)}, updated_at = NOW() WHERE id = %s;"
+                    cur.execute(sql_update_post, tuple(params))
+
+                # 步驟 2: 如果提供了 attachments，則完全取代舊的
+                if 'attachments' in new_data:
+                    # 先刪除所有舊附件
+                    cur.execute("DELETE FROM attachments WHERE post_id = %s;", (post_id,))
+                    # 如果新附件列表不為空，則新增它們
+                    new_attachments = new_data['attachments']
+                    if new_attachments and isinstance(new_attachments, list):
+                        attach_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES %s;"
+                        attach_data = [(post_id, att.get('path'), att.get('original_filename')) for att in new_attachments]
+                        psycopg2.extras.execute_values(cur, attach_sql, attach_data)
+
+                # 步驟 3: 如果提供了 hashtags，則完全取代舊的
+                if 'hashtags' in new_data:
+                    # 先刪除所有舊的標籤關聯
+                    cur.execute("DELETE FROM post_hashtags WHERE post_id = %s;", (post_id,))
+                    # 如果新標籤列表不為空，則新增它們
+                    new_hashtags = new_data['hashtags']
+                    if new_hashtags and isinstance(new_hashtags, list):
+                        tag_ids = []
+                        for tag_name in new_hashtags:
+                            # 查找或新增標籤，並取得 ID
+                            cur.execute("INSERT INTO hashtags (tag_name) VALUES (%s) ON CONFLICT (tag_name) DO UPDATE SET tag_name=EXCLUDED.tag_name RETURNING id;", (tag_name,))
+                            tag_id = cur.fetchone()[0]
+                            tag_ids.append(tag_id)
+                        
+                        # 建立新的關聯
+                        post_tag_sql = "INSERT INTO post_hashtags (post_id, hashtag_id) VALUES %s;"
+                        post_tag_data = [(post_id, tag_id) for tag_id in tag_ids]
+                        psycopg2.extras.execute_values(cur, post_tag_sql, post_tag_data)
+
+            # 如果所有操作都成功，提交交易
             self.conn.commit()
             return True
         except psycopg2.Error as e:
-            print(f"更新文章時發生錯誤: {e}")
+            # 如果任何步驟出錯，回滾所有操作
+            print(f"更新文章 (ID: {post_id}) 時發生錯誤: {e}")
             self.conn.rollback()
             return False
         
-    def get_post(self, post_id):
-        """根據 ID 尋找文章，包含附件和標籤"""
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                sql = """
-                    SELECT p.*, u.name as author_name, c.name as category_name,
-                           ARRAY_AGG(DISTINCT h.tag_name) FILTER (WHERE h.tag_name IS NOT NULL) as hashtags,
-                           JSON_AGG(DISTINCT jsonb_build_object('path', a.file_path, 'name', a.original_filename)) FILTER (WHERE a.id IS NOT NULL) as attachments
-                    FROM posts p
-                    LEFT JOIN users u ON p.user_id = u.id
-                    LEFT JOIN categories c ON p.category_id = c.id
-                    LEFT JOIN post_hashtags ph ON p.id = ph.post_id
-                    LEFT JOIN hashtags h ON ph.hashtag_id = h.id
-                    LEFT JOIN attachments a ON p.id = a.post_id
-                    WHERE p.id = %s
-                    GROUP BY p.id, u.name, c.name;
-                """
-                cur.execute(sql, (post_id,))
-                post = cur.fetchone()
-                return dict(post) if post else None
-        except psycopg2.Error as e:
-            print(f"尋找文章時發生錯誤: {e}")
-            return None
         
-    def get_all_posts(self, order_by='announcement_date', limit=20, offset=0):
+    def get_all_posts(self, order_by='announcement_date', page_size=10, offset=0):
         """取得所有文章，可指定排序方式"""
         if order_by not in ['announcement_date', 'click_count']:
             order_by = 'announcement_date'
+
+        self.conn = self.connect()
+        if not self.conn: return None
         
         try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                sql = f"SELECT id, title, click_count, announcement_date FROM posts ORDER BY {order_by} DESC LIMIT %s OFFSET %s;"
-                cur.execute(sql, (limit, offset))
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                sql = f"SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date FROM posts ORDER BY {order_by} DESC LIMIT %s OFFSET %s;"
+                cur.execute(sql, (page_size, offset))
                 return [dict(row) for row in cur.fetchall()]
         except psycopg2.Error as e:
             print(f"取得所有文章時發生錯誤: {e}")
             return []
-    def search_posts_by_title(self, keyword):
-        """根據標題關鍵字尋找文章"""
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                sql = "SELECT id, title FROM posts WHERE title ILIKE %s;"
-                cur.execute(sql, (f"%{keyword}%",))
-                return [dict(row) for row in cur.fetchall()]
-        except psycopg2.Error as e:
-            print(f"搜尋文章時發生錯誤: {e}")
-            return []
-    def get_posts_by_category(self, category_id, include_subcategories=False):
-        """根據分類 ID 尋找文章"""
-        target_ids = [category_id]
-        if include_subcategories:
-            sub_cats = self.get_subcategories(category_id)
-            target_ids.extend([cat['id'] for cat in sub_cats])
         
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                sql = "SELECT id, title FROM posts WHERE category_id = ANY(%s);"
-                cur.execute(sql, (target_ids,))
-                return [dict(row) for row in cur.fetchall()]
-        except psycopg2.Error as e:
-            print(f"按分類尋找文章時發生錯誤: {e}")
-            return []
-    def search_posts(self, keyword, source_type=None):
-        self.conn = self.connect()
-        """
-        使用 ILIKE 搜尋文章
-        :param keyword: 搜尋關鍵字
-        :param source_type: (可選) 指定來源，如 '布告欄'
-        """
-        if not self.conn: return []
-        results = []
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                # 使用 ILIKE 進行不分大小寫的模糊比對
-                query = """
-                    SELECT
-                        p.id, p.title,
-                        c.name as category_name,
-                        COALESCE(parent_c.name, c.name) as source_type
-                    FROM posts p
-                    LEFT JOIN categories c ON p.category_id = c.id
-                    LEFT JOIN categories parent_c ON c.parent_id = parent_c.id
-                    WHERE p.title ILIKE %s
-                """
-                # 參數需要加上 '%' 萬用字元
-                params = [f"%{keyword}%"]
-
-                if source_type:
-                    query += " AND COALESCE(parent_c.name, c.name) = %s"
-                    params.append(source_type)
-                
-                query += ";"
-                cur.execute(query, tuple(params))
-                results = cur.fetchall()
-        except psycopg2.Error as e:
-            print(f"搜尋時發生錯誤: {e}")
-        return results
-
-    # --- 留言板CURD ---
-    def insert_bulletin_message(self, author_name, content, department=None, campus=None):
+    def get_post(self, post_id):
         self.conn = self.connect()
         if not self.conn: return None
-        if not content or not content.strip():
-            print("錯誤：留言內容不可為空。")
+        try:
+            with self.conn.cursor(psycopg2.extras.RealDictCursor) as cur:
+                sql = f"SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date FROM posts WHERE id = %s;"
+                cur.execute(sql, (post_id))
+                return cur.fetchall()
+        except psycopg2.Error as e:
+            print(f"取得所有文章時發生錯誤: {e}")
             return None
+            
         
-        author_to_insert = author_name if author_name and author_name.strip() else None
+
+    def get_posts(self, filters=None, page_size=10, offset=0):
+        self.conn = self.connect()
+        if not self.conn: return None
+        """
+        【新功能】根據多種條件動態查詢文章。
+        filters 是一個字典，例如: {'title_keyword': '競賽'}, {'category_id': 1}, {'user_id': 1}
+        """
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                where_clauses = []
+                params = []
+
+                if filters:
+                    if 'title_keyword' in filters:
+                        where_clauses.append("title ILIKE %s")
+                        params.append(f"%{filters['title_keyword']}%")
+                    if 'category_id' in filters:
+                        where_clauses.append("category_id = %s")
+                        params.append(filters['category_id'])
+                    if 'user_id' in filters:
+                        where_clauses.append("user_id = %s")
+                        params.append(filters['user_id'])
+                
+                where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+                
+                sql = f"""
+                    SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date
+                    FROM posts
+                    WHERE {where_sql}
+                    ORDER BY announcement_date DESC
+                    LIMIT %s OFFSET %s;
+                """
+                params.extend([page_size, offset])
+                
+                cur.execute(sql, tuple(params))
+                return [dict(row) for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            print(f"查詢文章時發生錯誤: {e}")
+            return []
+    
+    # --- 留言板CURD ---
+    def create_post(self, title, content, user_id, category_id, main_image_url=None, attachments=None):
         try:
             with self.conn.cursor() as cur:
-                sql = "INSERT INTO bulletin_messages (author_name, content, department, campus) VALUES (%s, %s, %s, %s) RETURNING id;"
-                params = (author_to_insert, content, department, campus)
-                cur.execute(sql, params)
-                
-                # 【關鍵修正】先檢查 fetchone() 的結果
+                post_sql = "INSERT INTO posts (title, content, user_id, category_id, main_image_url) VALUES (%s, %s, %s, %s, %s) RETURNING id;"
+                cur.execute(post_sql, (title, content, user_id, category_id, main_image_url))
+                result = cur.fetchone()
+                if not result: raise Exception("新增 Post 後未能取得返回的 ID")
+                post_id = result[0]
+
+                if attachments:
+                    attachment_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES (%s, %s, %s);"
+                    args_list = [(post_id, att.get('path'), att.get('original_filename')) for att in attachments]
+                    psycopg2.extras.execute_values(cur, attachment_sql, args_list)
+            self.conn.commit()
+            return post_id
+        except Exception as e:
+            self.conn.rollback()
+            print(f"新增 Post 時發生錯誤: {e}")
+            return None
+
+    def get_post(self, post_id):
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                sql = "SELECT p.*, u.name as author_name, c.name as category_name FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = %s;"
+                cur.execute(sql, (post_id,))
+                post = cur.fetchone()
+                return dict(post) if post else None
+        except psycopg2.Error as e:
+            print(f"取得文章時發生錯誤: {e}")
+            return None
+            
+    def get_post_owner(self, post_id):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM posts WHERE id = %s;", (post_id,))
+                result = cur.fetchone()
+                return result[0] if result else None
+        except psycopg2.Error as e:
+            return None
+
+    def get_posts(self, filters=None, limit=20, offset=0):
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                where_clauses, params = [], []
+                if filters:
+                    if 'title_keyword' in filters:
+                        where_clauses.append("title ILIKE %s")
+                        params.append(f"%{filters['title_keyword']}%")
+                    if 'category_id' in filters:
+                        where_clauses.append("category_id = %s")
+                        params.append(filters['category_id'])
+                    if 'user_id' in filters:
+                        where_clauses.append("user_id = %s")
+                        params.append(filters['user_id'])
+                where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+                sql = f"SELECT id, title, user_id, category_id, click_count, announcement_date FROM posts WHERE {where_sql} ORDER BY announcement_date DESC LIMIT %s OFFSET %s;"
+                params.extend([limit, offset])
+                cur.execute(sql, tuple(params))
+                return [dict(row) for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            print(f"查詢文章時發生錯誤: {e}")
+            return []
+
+    def update_post(self, post_id, new_data):
+        fields = ['title', 'content', 'main_image_url', 'category_id']
+        set_clause = ", ".join([f"{key} = %s" for key in new_data if key in fields])
+        params = [new_data[key] for key in new_data if key in fields]
+        if not set_clause: return False
+        params.append(post_id)
+        sql = f"UPDATE posts SET {set_clause}, updated_at = NOW() WHERE id = %s;"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, tuple(params))
+                if cur.rowcount > 0:
+                    self.conn.commit()
+                    return True
+            return False
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            return False
+
+    def delete_post(self, post_id):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM posts WHERE id = %s;", (post_id,))
+                if cur.rowcount > 0:
+                    self.conn.commit()
+                    return True
+            return False
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            return False
+
+    # --- Bulletin (Guestbook) Management ---
+    def insert_bulletin_message(self, author_name, content, department=None, campus=None):
+        try:
+            with self.conn.cursor() as cur:
+                sql = "INSERT INTO guestbook_messages (author_name, content, department, campus) VALUES (%s, %s, %s, %s) RETURNING id;"
+                author_to_insert = author_name if author_name and author_name.strip() else None
+                cur.execute(sql, (author_to_insert, content, department, campus))
                 result = cur.fetchone()
                 if result:
-                    message_id = result[0]
                     self.conn.commit()
-                    print(f"感謝 '{author_to_insert or '匿名訪客'}' 的留言！ (ID: {message_id})")
-                    return message_id
-                else:
-                    # 如果沒有返回結果，表示新增失敗
-                    print("錯誤：新增留言後未能取得返回的 ID。")
-                    self.conn.rollback()
-                    return None
+                    return result[0]
+            return None
         except psycopg2.Error as e:
-            print(f"新增留言時發生錯誤: {e}")
             self.conn.rollback()
             return None
 
-    def get_all_bulletin_messages(self, page_size: int, offset: int) -> dict:
-        self.conn = self.connect()
-        """取得最新的留言板訊息"""
-        if not self.conn: return []
+    def get_bulletin_messages(self, target_date=None, campus=None, department=None, page_size=10, offset=0):
         try:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("SELECT id, author_name, content, campus, department, created_at FROM bulletin_messages ORDER BY created_at DESC LIMIT %s OFFSET %s;", (page_size, offset))
-                rows = cur.fetchall()
-                cur.execute("SELECT COUNT(*) FROM bulletin_messages")
-                total = cur.fetchone()['count']
-                return{'rows':rows, 'total':total}
+                where_clauses, params = [], []
+                if target_date:
+                    where_clauses.append("created_at::date = %s")
+                    params.append(target_date)
+                if campus:
+                    where_clauses.append("campus = %s")
+                    params.append(campus)
+                if department:
+                    where_clauses.append("department = %s")
+                    params.append(department)
+                where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+                
+                count_sql = f"SELECT COUNT(*) as total FROM guestbook_messages WHERE {where_sql};"
+                cur.execute(count_sql, tuple(params))
+                total = cur.fetchone()['total']
+                
+                data_sql = f"SELECT * FROM guestbook_messages WHERE {where_sql} ORDER BY created_at DESC LIMIT %s OFFSET %s;"
+                params.extend([page_size, offset])
+                cur.execute(data_sql, tuple(params))
+                messages = [dict(row) for row in cur.fetchall()]
+                return {'total': total, 'data': messages}
         except psycopg2.Error as e:
-            print(f"讀取留言時發生錯誤: {e}")
-            return []
-        
-
-    def get_messages_by_date(self, target_date: date, page_size: int, offset: int):
-        self.conn = self.connect()
-        """【新功能】根據特定日期 (YYYY-MM-DD) 取得留言"""
-        if not self.conn: return []
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                # 使用 ::date 將 TIMESTAMPTZ 轉換為 DATE 型別進行比較
-                sql = """
-                    SELECT id, author_name, content, department, campus, created_at 
-                    FROM guestbook_messages 
-                    WHERE created_at::date = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s;
-                """
-                cur.execute(sql, (target_date, page_size, offset))
-                rows = cur.fetchall()
-                cur.execute("SELECT COUNT(*) FROM bulletin_messages")
-                total = cur.fetchone()['count']
-                return{'rows':rows, 'total':total}
-        except psycopg2.Error as e:
-            print(f"按日期查詢留言時發生錯誤: {e}")
-            return []
-
-    def get_messages_by_campus_and_department(self, campus: str, department: str, page_size: int, offset: int):
-        self.conn = self.connect()
-        """【新功能】根據校區和系所取得留言 (兩者皆須提供)"""
-        if not self.conn: return []
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                sql = """
-                    SELECT id, author_name, content, department, campus, created_at 
-                    FROM guestbook_messages 
-                    WHERE campus = %s AND department = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s;;
-                """
-                cur.execute(sql, (campus, department, page_size, offset))
-                rows = cur.fetchall()
-                cur.execute("SELECT COUNT(*) FROM bulletin_messages")
-                total = cur.fetchone()['count']
-                return{'rows':rows, 'total':total}
-        except psycopg2.Error as e:
-            print(f"按校區和系所查詢留言時發生錯誤: {e}")
-            return []
-        
+            print(f"查詢留言時發生錯誤: {e}")
+            return {'total': 0, 'data': []}
 
     def delete_bulletin_message(self, message_id):
-        self.conn = self.connect()
-        """【Delete】刪除一則留言"""
-        if not self.conn: return False
         try:
             with self.conn.cursor() as cur:
-                sql = "DELETE FROM bulletin_messages WHERE id = %s;"
-                cur.execute(sql, (message_id,))
-                
-                if cur.rowcount == 0:
-                    print(f"刪除失敗：找不到 ID 為 {message_id} 的留言。")
-                    self.conn.rollback()
-                    return False
-
-            self.conn.commit()
-            print(f"ID 為 {message_id} 的留言已成功刪除。")
-            return True
+                # 注意：您 schema 中的 table 名稱為 guestbook_messages
+                cur.execute("DELETE FROM guestbook_messages WHERE id = %s;", (message_id,))
+                if cur.rowcount > 0:
+                    self.conn.commit()
+                    return True
+            return False
         except psycopg2.Error as e:
-            print(f"刪除留言 (ID: {message_id}) 時發生錯誤: {e}")
             self.conn.rollback()
             return False
 
