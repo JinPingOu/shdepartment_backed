@@ -394,6 +394,10 @@ class DBHandler:
                         params.append(filters['user_id'])
                 
                 where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+            
+                count_sql = f"SELECT COUNT(*) as total FROM categories WHERE {where_sql};"
+                cur.execute(count_sql)
+                total = cur.fetchone()['total']
                 
                 sql = f"""
                     SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date
@@ -405,7 +409,8 @@ class DBHandler:
                 params.extend([page_size, offset])
                 
                 cur.execute(sql, tuple(params))
-                return [dict(row) for row in cur.fetchall()]
+                messages = [dict(row) for row in cur.fetchall()]
+                return {'total': total, 'rows': messages}
         except psycopg2.Error as e:
             print(f"查詢文章時發生錯誤: {e}")
             return []

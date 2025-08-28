@@ -120,7 +120,7 @@ def handle_categories():
         category_type = request.args.get('category_type')
         with DBHandler() as db:
             categories = db.get_categories_by_type(category_type)
-            return jsonify({'status': 200, 'result': categories, 'success': True})
+            return jsonify({'status': 200, 'message': "success", 'result': categories, 'success': True})
 
     if request.method == 'POST':
         @permission_required('manager')
@@ -131,7 +131,7 @@ def handle_categories():
             with DBHandler() as db:
                 cat_id = db.insert_category(data['name'], data['category_type'])
                 if cat_id:
-                    return jsonify({'status': 201, 'message': '分類建立成功', 'id': cat_id, 'success': True}), 201
+                    return jsonify({'status': 200, 'message': '分類建立成功', 'id': cat_id, 'success': True}), 200
                 else:
                     return jsonify({'status': 400, 'message': '無法建立分類', 'success': False}), 400
         return create()
@@ -157,7 +157,7 @@ def handle_posts():
         offset = (page - 1) * page_size
         with DBHandler() as db:
             posts = db.get_posts(filters=filters, page_size=page_size, offset=offset)
-            return jsonify({'status': 200, 'result': posts, 'success': True})
+            return jsonify({'status': 200, 'message': "success", 'result': posts, 'success': True})
 
     if request.method == 'POST':
         @permission_required(['manager', 'editor'])
@@ -167,7 +167,7 @@ def handle_posts():
             if not data or not all(k in data for k in required):
                 return jsonify({'status': 400, 'message': f"缺少欄位: {required}", 'success': False}), 400
             
-            main_image_path = save_base64_file(data.get('main_image'), 'images') if data.get('main_image') else scrape_and_save_image(data['content'])
+            main_image_path = save_base64_file(data.get('main_image_url'), 'images') if data.get('main_image_url') else scrape_and_save_image(data['content'])
             attachments_list = [save_base64_file(f, 'attachments') for f in data.get('attachments', [])]
             
             with DBHandler() as db:
@@ -177,7 +177,7 @@ def handle_posts():
                     attachments=[{'path': p, 'original_filename': f.get('filename')} for p, f in zip(attachments_list, data.get('attachments', [])) if p]
                 )
             if post_id:
-                return jsonify({'status': 201, 'message': "文章建立成功", 'id': post_id, 'success': True}), 201
+                return jsonify({'status': 200, 'message': "文章建立成功", 'id': post_id, 'success': True}), 201
             else:
                 return jsonify({'status': 500, 'message': "無法建立文章", 'success': False}), 500
         return create()
@@ -187,7 +187,7 @@ def handle_post_by_id(post_id):
     if request.method == 'GET':
         with DBHandler() as db:
             post = db.get_post(post_id)
-            return jsonify({'status': 200, 'result': post, 'success': True}) if post else jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
+            return jsonify({'status': 200, "message": "success", 'result': post, 'success': True}) if post else jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
 
     @permission_required(['manager', 'editor'])
     def protected_operation():

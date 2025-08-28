@@ -72,8 +72,11 @@ meeting_system_backend/
 ├── wsgi.py            # 正式上線時啟動wsgi server
 ├── db_handler.py      # DB 資料庫操作
 ├── requirements.txt   # 相依套件列表
-└── static/            # 靜態文件資料夾
-
+├── static/            # 靜態文件資料夾
+└── uploads/
+    ├── attachments    # 公告附件 
+    ├── images         # 公告主視覺圖
+    └── files          # 上傳文件
 ```
 
 ## API 說明
@@ -81,6 +84,226 @@ meeting_system_backend/
 - **prefix**:`sh-department-api`
   在`app.py` _app.config['APPLICATION_ROOT']_ 調整
 
+### 類別
+### 1. 取得類別
+
+- **方法**：GET
+- **路徑**：`/api/categories`
+- **Query 參數**：
+  - `category_type`（str, 必填）："instructions"(說明文件) / "latest_news"(最新消息)
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "rows": [
+      {
+        "id": 1,
+        "name": "人資 Q&A 助手",
+        "category_type": "instructions"
+      }
+    ],
+    "total": 100
+  },
+  "success": true
+}
+```
+
+- **功能描述**：取得instructions(說明文件) 或 latest_news(最新消息)下的類別。
+- total: 用於前端。
+
+---
+
+
+### 2. 新增類別
+
+- **方法**：POST
+- **路徑**：`/api/categories`
+- **Body**：`application/json`
+  - `name`: 類別名稱
+  - `category_type`：instructions 或 latest_news
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "分類建立成功",
+  "id": 123, 
+  "success": true
+}
+```
+
+- **功能描述**：新增最新消息或說明文件的類別。
+
+---
+
+### 3. 刪除指定類別
+
+- **方法**：DELETE
+- **路徑**：`/api/categories/<int:category_id>`
+- **URL 參數**：
+  - `category_id`（int, 必填）：類別 ID
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "分類刪除成功",
+  "success": true
+}
+```
+
+- **功能描述**：刪除指定的類別。
+
+---
+
+### 公告
+### 1. 取得某標題/某類別/某發布者的公告
+
+- **方法**：GET
+- **路徑**：`/api/posts`
+- **Query 參數**：(title_keyword/category_id/user_id 必至少填一樣)
+  - `title_keyword`（str, 選填）：搜尋標題的關鍵字
+  - `category_id`（int, 選填）：類別 ID
+  - `user_id`（int, 選填）：公告發布者 ID
+  - `page`（int, 選填，預設 1）：分頁頁碼
+  - `page_size`（int, 選填，預設 10）：每頁筆數
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "rows": [
+      {
+        "id": 1,
+        "title": "人資 Q&A 助手 - 說明文件",
+        "content": "<h1>...</h1>",
+        "main_image_url": "image.png",
+        "user_id": 1,
+        "catrgory_id": 2,
+        "click_count": 13,
+        "announcement_date" "2025-08-27 11:57"
+      }
+    ],
+    "total": 100
+  },
+  "success": true
+}
+```
+
+- **功能描述**：分頁取得某標題/某類別/某發布者的公告。
+- total: 用於前端分頁用。
+
+---
+
+### 2. 新增公告
+
+- **方法**：POST
+- **路徑**：`/api/posts`
+- **Body**：`application/json`
+  - `title`：搜尋標題的關鍵字
+  - `content`：類別 ID
+  - `user_id`：公告發布者 ID
+  - `category_id`：類別 ID
+  - `main_image_url`：公告主視覺圖檔名 or None
+  - `attachments`：公告附檔列表
+  - `hashtags`：標籤列表
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "文章建立成功",
+  "id": 123, 
+  "success": true
+}
+```
+
+- **功能描述**：新增公告。
+
+---
+
+### 3. 取得指定的公告
+
+- **方法**：GET
+- **路徑**：`/api/posts/<int:post_id>`
+- **URL 參數**：
+  - `post_id`（int, 必填）：搜尋某公告的ID
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "id": 1,
+    "title": "人資 Q&A 助手 - 說明文件",
+    "content": "<h1>...</h1>",
+    "main_image_url": "image.png",
+    "user_id": 1,
+    "catrgory_id": 2,
+    "click_count": 13,
+    "announcement_date" "2025-08-27 11:57"
+  },
+  "success": true
+}
+```
+
+- **功能描述**：取得指定的公告。
+
+### 4. 更新指定的公告
+
+- **方法**：PUT
+- **路徑**：`/api/posts/<int:post_id>`
+- **URL 參數**：
+  - `post_id`（int, 必填）：更新某公告的ID
+- **Body**：`application/json`
+  - `title`：搜尋標題的關鍵字
+  - `content`：類別 ID
+  - `user_id`：公告發布者 ID
+  - `category_id`：類別 ID
+  - `main_image_url`：公告主視覺圖檔名 or None
+  - `attachments`：公告附檔列表
+  - `hashtags`：標籤列表
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "文章更新成功",
+  "success": true
+}
+```
+
+- **功能描述**：更新指定的公告。
+
+---
+### 5. 刪除指定的公告
+
+- **方法**：DELETE
+- **路徑**：`/api/posts/<int:post_id>`
+- **URL 參數**：
+  - `post_id`（int, 必填）：更新某公告的ID
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "文章刪除成功",
+  "success": true
+}
+```
+
+- **功能描述**：刪除指定的公告。
+
+
+---
+
+### 布告欄
 ### 1. 取得所有布告欄訊息
 
 - **方法**：GET
