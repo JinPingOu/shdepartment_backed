@@ -263,7 +263,7 @@ def handle_bulletin_messages():
                     target_date=target_date, campus=request.args.get('campus'),
                     department=request.args.get('department'), page_size=page_size, offset=offset
                 )
-            return jsonify({'status': 200, 'result': bulletins, 'success': True})
+            return jsonify({'status': 200, "message": "success", 'result': bulletins, 'success': True})
         except Exception as e:
             return jsonify({'status': 400, 'message': str(e), 'success': False}), 400
 
@@ -277,7 +277,7 @@ def handle_bulletin_messages():
                 department=data.get('department'), campus=data.get('campus')
             )
         if message_id:
-            return jsonify({'status': 201, 'message': "留言新增成功", 'id': message_id, 'success': True}), 201
+            return jsonify({'status': 200, 'message': "留言新增成功", 'id': message_id, 'success': True}), 201
         else:
             return jsonify({'status': 500, 'message': "無法新增留言", 'success': False}), 500
 
