@@ -355,8 +355,7 @@ def handle_bulletin_messages():
                 department=data.get('department'), campus=data.get('campus')
             )
         if message_id:
-            print(message_id)
-            return jsonify({'status': 200, 'message': "留言新增成功", 'id': message_id, 'success': True}), 201
+            return jsonify({'status': 201, 'message': "留言新增成功", 'id': message_id, 'success': True}), 201
         else:
             return jsonify({'status': 500, 'message': "無法新增留言", 'success': False}), 500
   
