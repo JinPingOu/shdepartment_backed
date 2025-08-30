@@ -198,7 +198,15 @@ class DBHandler:
         except psycopg2.Error as e:
             self.conn.rollback()
             return False
-
+    
+    def get_type_by_category(self, category_id):
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SELECT category_type FROM categories WHERE category_id = %s;", (category_id))
+        except psycopg2.Error as e:
+            print(f"尋找子分類時發生錯誤: {e}")
+            return None
+        
     def get_categories_by_type(self, category_type: str):
         try:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -222,15 +230,37 @@ class DBHandler:
         except psycopg2.Error as e:
             print(f"尋找分類時發生錯誤: {e}")
             return []
+    
+    # --- 上傳文件 ---
+    def upload_file(self, attachments):
+        try:
+            with self.conn.cursor() as cur:
+                if attachments and isinstance(attachments, list):
+                        attachment_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES %s;"
+                        args_list = [(None, att.get('path'), att.get('original_filename')) for att in attachments]
+                        psycopg2.extras.execute_values(cur, attachment_sql, args_list)
+                self.conn.commit()
+                print(f"已成功上傳檔案'{attachments}'")
+                return True
+        except psycopg2.Error as e:
+            print(f"上傳檔案時發生錯誤: {e}")
+            self.conn.rollback()
+            return False
+        
+    def get_files(self):
+        return None
+
+    def delete_files(self, att_id):
+        return None
 
     # --- 文章 CRUD ---
-    def insert_post(self, title, content, user_id, category_id, main_image_url=None, attachments=None, hashtags=None):
+    def insert_post(self, title, content, user_id, category_id, main_image_url=None, hashtags=None):
         try:
             with self.conn.cursor() as cur:
                 # 新增 post 主體並取得返回的 post ID
                 post_sql = """
                     INSERT INTO posts (title, content, user_id, category_id, main_image_url)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING id;
+                VALUES (%s, %s, %s, %s, %s) RETURNING id;
                 """
                 cur.execute(post_sql, (title, content, user_id, category_id, main_image_url))
                 
@@ -240,10 +270,10 @@ class DBHandler:
                 post_id = result[0]
 
                 # 如果有提供附件，則將它們新增到 attachments 表
-                if attachments and isinstance(attachments, list):
-                    attachment_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES %s;"
-                    args_list = [(post_id, att.get('path'), att.get('original_filename')) for att in attachments]
-                    psycopg2.extras.execute_values(cur, attachment_sql, args_list)
+                # if attachments and isinstance(attachments, list):
+                #     attachment_sql = "INSERT INTO attachments (post_id, file_path, original_filename) VALUES %s;"
+                #     args_list = [(post_id, att.get('path'), att.get('original_filename')) for att in attachments]
+                #     psycopg2.extras.execute_values(cur, attachment_sql, args_list)
 
                 # 處理標籤
                 if hashtags and isinstance(hashtags, list):
@@ -363,7 +393,7 @@ class DBHandler:
     def get_post(self, post_id):
         try:
             with self.conn.cursor(psycopg2.extras.RealDictCursor) as cur:
-                sql = f"SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date FROM posts WHERE id = %s;"
+                sql = f"SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date FROM posts WHERE id = %s ;"
                 cur.execute(sql, (post_id))
                 return cur.fetchall()
         except psycopg2.Error as e:
@@ -372,11 +402,13 @@ class DBHandler:
             
         
 
-    def get_posts(self, filters=None, page_size=10, offset=0):
+    def get_posts(self, filters=None, order_by='announcement_date', page_size=10, offset=0):
         """
         【新功能】根據多種條件動態查詢文章。
         filters 是一個字典，例如: {'title_keyword': '競賽'}, {'category_id': 1}, {'user_id': 1}
         """
+        if order_by not in ['announcement_date', 'click_count']:
+            order_by = 'announcement_date'
         try:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 where_clauses = []
@@ -395,7 +427,7 @@ class DBHandler:
                 
                 where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
             
-                count_sql = f"SELECT COUNT(*) as total FROM categories WHERE {where_sql};"
+                count_sql = f"SELECT COUNT(*) as total FROM categories WHERE {where_sql} ;"
                 cur.execute(count_sql)
                 total = cur.fetchone()['total']
                 
@@ -403,7 +435,7 @@ class DBHandler:
                     SELECT id, title, content, main_image_url, user_id, category_id, click_count, announcement_date
                     FROM posts
                     WHERE {where_sql}
-                    ORDER BY announcement_date DESC
+                    ORDER BY {order_by} DESC
                     LIMIT %s OFFSET %s;
                 """
                 params.extend([page_size, offset])
@@ -416,11 +448,13 @@ class DBHandler:
             return []
     
     # --- 留言板CURD ---
-    def insert_bulletin_message(self, author_name, content, department=None, campus=None):
+    def insert_bulletin_message(self, content, author_name=None, department=None, campus=None):
         try:
             with self.conn.cursor() as cur:
                 sql = "INSERT INTO bulletin_messages (author_name, content, department, campus) VALUES (%s, %s, %s, %s) RETURNING id;"
-                author_to_insert = author_name if author_name and author_name.strip() else None
+                author_to_insert = author_name if author_name else "匿名訪客"
+                author_to_insert = author_to_insert if author_to_insert and author_to_insert.strip() else None
+
                 cur.execute(sql, (author_to_insert, content, department, campus))
                 result = cur.fetchone()
                 if result:
@@ -473,6 +507,7 @@ class DBHandler:
             return False
 
 
+
 # --- 主執行區塊 ---
 if __name__ == "__main__":
     if not os.path.exists('schema.sql'):
@@ -497,7 +532,7 @@ if __name__ == "__main__":
                 # db.insert_bulletin_message("熱心鄉民", "請問 AI 研討會什麼時候報名？", campus="義大癌治療醫院")
 
                 # print("\n--- 2. 刪除指定布告欄訊息 ---")
-                # db.delete_bulletin_message(2)
+                # db.delete_bulletin_message(15)
 
                 # print("\n--- 3. 讀取留言板 ---")
                 # messages = db.get_bulletin_messages(page_size=10,offset=0,campus='義大醫院')
@@ -548,7 +583,6 @@ if __name__ == "__main__":
                 # message = db.get_posts()
                 # print(message)
                 print()
-
 
         except psycopg2.OperationalError:  
             # 如果連線在 __enter__ 中就失敗了，會在這裡捕獲到

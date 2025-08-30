@@ -122,8 +122,8 @@ meeting_system_backend/
 - **方法**：POST
 - **路徑**：`/api/categories`
 - **Body**：`application/json`
-  - `name`: 類別名稱
-  - `category_type`：instructions 或 latest_news
+  - `name`（str, 必填）: 類別名稱
+  - `category_type`（str, 必填）：instructions 或 latest_news
 - **回傳格式**：
 
 ```json
@@ -160,14 +160,15 @@ meeting_system_backend/
 ---
 
 ### 公告
-### 1. 取得某標題/某類別/某發布者的公告
+### 1. 取得某標題/某類別/某發布者/全部的公告
 
 - **方法**：GET
 - **路徑**：`/api/posts`
-- **Query 參數**：(title_keyword/category_id/user_id 必至少填一樣)
+- **Query 參數**：
   - `title_keyword`（str, 選填）：搜尋標題的關鍵字
   - `category_id`（int, 選填）：類別 ID
   - `user_id`（int, 選填）：公告發布者 ID
+  - `order_by`(str, 選填) :排序方式 ("announcement_date" 或 "click_count")
   - `page`（int, 選填，預設 1）：分頁頁碼
   - `page_size`（int, 選填，預設 10）：每頁筆數
 - **回傳格式**：
@@ -204,14 +205,14 @@ meeting_system_backend/
 
 - **方法**：POST
 - **路徑**：`/api/posts`
-- **Body**：`application/json`
-  - `title`：搜尋標題的關鍵字
-  - `content`：類別 ID
-  - `user_id`：公告發布者 ID
-  - `category_id`：類別 ID
-  - `main_image_url`：公告主視覺圖檔名 or None
-  - `attachments`：公告附檔列表
-  - `hashtags`：標籤列表
+- **Body**：`multipart/form`
+  - `main_image_url`（file, 選填）：主視覺圖
+  - `attachments`（file list, 選填）: 公告附檔列表
+  - `metadata`: 
+    - `title`（str, 必填）：搜尋標題的關鍵字
+    - `content`（str, 必填）：類別 ID
+    - `category_id`（str, 必填）：類別 ID
+    - `hashtags`（str list, 選填）：標籤列表
 - **回傳格式**：
 
 ```json
@@ -261,14 +262,14 @@ meeting_system_backend/
 - **路徑**：`/api/posts/<int:post_id>`
 - **URL 參數**：
   - `post_id`（int, 必填）：更新某公告的ID
-- **Body**：`application/json`
-  - `title`：搜尋標題的關鍵字
-  - `content`：類別 ID
-  - `user_id`：公告發布者 ID
-  - `category_id`：類別 ID
-  - `main_image_url`：公告主視覺圖檔名 or None
-  - `attachments`：公告附檔列表
-  - `hashtags`：標籤列表
+- **Body**：`multipart/form`
+  - `main_image_url`（file, 選填）：主視覺圖
+  - `attachments`（file list, 選填）: 公告附檔列表
+  - `metadata`: 
+    - `title`（str, 必填）：搜尋標題的關鍵字
+    - `content`（str, 必填）：類別 ID
+    - `category_id`（str, 必填）：類別 ID
+    - `hashtags`（str list, 選填）：標籤列表
 - **回傳格式**：
 
 ```json
@@ -304,11 +305,14 @@ meeting_system_backend/
 ---
 
 ### 布告欄
-### 1. 取得所有布告欄訊息
+### 1. 取得某天或某部門或全部的布告欄訊息
 
 - **方法**：GET
-- **路徑**：`/api/get_all_bulletin_messages`
+- **路徑**：`/api/bulletin_messages`
 - **Query 參數**：
+  - `campus`（str, 選填）：院區
+  - `department`（str, 選填）：部門
+  - `date`（str, 選填）：要尋找的日子(格式: YYYY-MM-DD)
   - `page`（int, 選填，預設 1）：分頁頁碼
   - `page_size`（int, 選填，預設 10）：每頁筆數
 - **回傳格式**：
@@ -339,92 +343,21 @@ meeting_system_backend/
 
 ---
 
-### 2. 取得某天時間的布告欄訊息
-
-- **方法**：GET
-- **路徑**：`/api/get_bulletin_messages_by_date`
-- **Query 參數**：
-  - `page`（int, 選填，預設 1）：分頁頁碼
-  - `page_size`（int, 選填，預設 10）：每頁筆數
-  - `date`（str, 必填）：要尋找的日子(格式: YYYY-MM-DD)
-- **回傳格式**：
-
-```json
-{
-  "status": 200,
-  "message": "success",
-  "result": {
-    "rows": [
-      {
-        "id": 1,
-        "author_name": "路人甲",
-        "content": "我好餓TT",
-        "campus": "義大醫院",
-        "department": "智慧醫療部",
-        "create_at": "2025-08-27 11:57"
-      }
-    ],
-    "total": 100
-  },
-  "success": true
-}
-```
-
-- **功能描述**：取得某天時間的布告欄訊息。
-
----
-
-### 3. 取得某部門的布告欄訊息
-
-- **方法**：GET
-- **路徑**：`/api/get_meeting`
-- **Query 參數**：
-  - `page`（int, 選填，預設 1）：分頁頁碼
-  - `page_size`（int, 選填，預設 10）：每頁筆數
-  - `campus`（str, 必填）：院區
-  - `department`（str, 必填）：部門
-- **回傳格式**：
-
-```json
-{
-  "status": 200,
-  "message": "success",
-  "result": {
-    "rows": [
-      {
-        "id": 1,
-        "author_name": "路人甲",
-        "content": "我好餓TT",
-        "campus": "義大醫院",
-        "department": "智慧醫療部",
-        "create_at": "2025-08-27 11:57"
-      }
-    ],
-    "total": 100
-  },
-  "success": true
-}
-```
-
-- **功能描述**：取得某部門的布告欄訊息。
-
----
-
-### 4. 新增布告欄訊息
+### 2. 新增布告欄訊息
 
 - **方法**：POST
-- **路徑**：`/api/insert_bulletin_message`
+- **路徑**：`/api/bulletin_messages`
 - **Body**：`application/json`
-  - `author_name`:發布者名稱 或 None
-  - `content`：布告欄訊息
-  - `campus`：院區名稱
-  - `department`：部門名稱
+  - `author_name`（str, 選填）:發布者名稱 或 None
+  - `content`（str, 必填）：布告欄訊息
+  - `campus`（str, 選填）：院區名稱
+  - `department`（str, 選填）：部門名稱
 - **回傳格式**：
 
 ```json
 {
   "status": 200,
-  "message": "file saved and inserted successfully",
+  "message": "留言新增成功",
   "id": 123, 
   "success": true
 }
@@ -434,18 +367,18 @@ meeting_system_backend/
 
 ---
 
-### 5. 刪除指定布告欄訊息
+### 3. 刪除指定布告欄訊息
 
 - **方法**：DELETE
-- **路徑**：`/api/meetings/delete_bulletin_message`
-- **Query 參數**：
+- **路徑**：`/api/bulletin_messages/<int:message_id>`
+- **URL 參數**：
   - `message_id`（int, 必填）：訊息 ID
 - **回傳格式**：
 
 ```json
 {
   "status": 200,
-  "message": "Message {message_id} deleted",
+  "message": "留言刪除成功",
   "success": true
 }
 ```
