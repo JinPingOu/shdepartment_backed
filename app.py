@@ -96,19 +96,19 @@ def permission_required(required_permissions):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            # user_id = request.headers.get('X-User-ID')
-            # if not user_id:
-            #     return jsonify({'status': 401, 'message': '未提供使用者身分 (缺少 X-User-ID 標頭)', 'success': False}), 401
-            # try:
-            #     with DBHandler() as db:
-            #         user = db.find_user(user_id=int(user_id))
-            #     if not user:
-            #         return jsonify({'status': 401, 'message': '無效的使用者 ID', 'success': False}), 401
-            #     g.user = user
-            #     if user['permission'] not in required_permissions and user['permission'] != 'manager':
-            #         return jsonify({'status': 403, 'message': f"權限不足，此操作需要 {required_permissions} 等級。", 'success': False}), 403
-            # except Exception as e:
-            #     return jsonify({'status': 500, 'message': f"驗證使用者身分時發生錯誤: {e}", 'success': False}), 500
+            user_id = request.headers.get('X-User-ID')
+            if not user_id:
+                return jsonify({'status': 401, 'message': '未提供使用者身分 (缺少 X-User-ID 標頭)', 'success': False}), 401
+            try:
+                with DBHandler() as db:
+                    user = db.find_user(user_id=int(user_id))
+                if not user:
+                    return jsonify({'status': 401, 'message': '無效的使用者 ID', 'success': False}), 401
+                g.user = user
+                if user['permission'] not in required_permissions and user['permission'] != 'manager':
+                    return jsonify({'status': 403, 'message': f"權限不足，此操作需要 {required_permissions} 等級。", 'success': False}), 403
+            except Exception as e:
+                return jsonify({'status': 500, 'message': f"驗證使用者身分時發生錯誤: {e}", 'success': False}), 500
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -148,7 +148,7 @@ def handle_categories():
                     return jsonify({'status': 400, 'message': '無法建立分類', 'success': False}), 400
         return create()
 
-@app.route('/api/categories/<int:category_name>', methods=['DELETE'])
+@app.route('/api/categories/<string:category_name>', methods=['DELETE'])
 @permission_required('manager')
 def handle_delete_category(category_name):
     with DBHandler() as db:

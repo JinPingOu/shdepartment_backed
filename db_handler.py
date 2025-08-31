@@ -220,21 +220,10 @@ class DBHandler:
         try:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if category_type:
-                    count_sql = f"SELECT COUNT(*) as total FROM categories WHERE category_type = %s;"
-                    cur.execute(count_sql, (category_type,))
-                    total = cur.fetchone()['total']
-
                     cur.execute("SELECT name, category_type FROM categories WHERE category_type = %s;", (category_type,))
-                    messages = [dict(row) for row in cur.fetchall()]
-                    return {'total': total, 'rows': messages}   
                 else:
-                    count_sql = f"SELECT COUNT(*) as total FROM categories;"
-                    cur.execute(count_sql)
-                    total = cur.fetchone()['total']
-
                     cur.execute("SELECT name, category_type FROM categories;")
-                    messages = [dict(row) for row in cur.fetchall()]
-                    return {'total': total, 'rows': messages}
+                return cur.fetchall()
                 
         except psycopg2.Error as e:
             print(f"尋找分類時發生錯誤: {e}")
@@ -517,7 +506,7 @@ class DBHandler:
                     return {'total': 0, "rows": []}
                 
                 sql = f"""
-                    SELECT id, title, content, user_id, category_name, status, click_count, announcement_date
+                    SELECT *
                     FROM posts
                     WHERE {where_sql}
                     ORDER BY {order_by} DESC
@@ -529,18 +518,21 @@ class DBHandler:
                 posts = cur.fetchall()
                 post_ids = [p['id'] for p in posts]
 
-                # 步驟 2: 一次性查詢所有相關的檔案
-                cur.execute("SELECT id, post_id, file_path, original_filename, file_type FROM files WHERE post_id = ANY(%s) AND file_type = 'attachments';", (post_ids,))
-                files = cur.fetchall()
-                files_map = {pid: [] for pid in post_ids}
-                for f in files:
-                    files_map[f['post_id']].append(f)
+                if not post_ids:
+                    return {'total': total, 'rows': []}
 
-                cur.execute("SELECT id, post_id, file_path, original_filename, file_type FROM files WHERE post_id = ANY(%s) AND file_type = 'images';", (post_ids,))
-                files = cur.fetchall()
-                files_map = {pid: [] for pid in post_ids}
-                for f in files:
-                    files_map[f['post_id']].append(f)
+                # 步驟 2: 一次性查詢所有相關的檔案
+                cur.execute("SELECT * FROM files WHERE post_id = ANY(%s) AND file_type = 'attachments';", (post_ids,))
+                attachments = cur.fetchall()
+                attachments_map = {pid: [] for pid in post_ids}
+                for f in attachments:
+                    attachments_map[f['post_id']].append(f)
+
+                cur.execute("SELECT * FROM files WHERE post_id = ANY(%s) AND file_type = 'images';", (post_ids,))
+                images = cur.fetchall()
+                images_map = {pid: [] for pid in post_ids}
+                for f in images:
+                    images_map[f['post_id']].append(f)
 
                 # 步驟 3: 一次性查詢所有相關的標籤
                 cur.execute("""
@@ -555,7 +547,8 @@ class DBHandler:
                 
                 # 步驟 4: 組合結果
                 for p in posts:
-                    p['files'] = files_map.get(p['id'], [])
+                    p['attachments'] = attachments_map.get(p['id'], [])
+                    p['images'] = images_map.get(p['id'], [])
                     p['hashtags'] = hashtags_map.get(p['id'], [])
                 
                 return {'total': total, 'rows': posts}
