@@ -85,12 +85,12 @@ meeting_system_backend/
   在`app.py` _app.config['APPLICATION_ROOT']_ 調整
 
 ### 類別
-### 1. 取得類別
+### 1. 取得某父類別下的類別
 
 - **方法**：GET
 - **路徑**：`/api/categories`
 - **Query 參數**：
-  - `category_type`（str, 必填）："instructions"(說明文件) / "latest_news"(最新消息)
+  - `category_type`（str, 選填）："instructions"(說明文件) / "latest_news"(最新消息) / (不選就都輸出)
 - **回傳格式**：
 
 ```json
@@ -111,7 +111,7 @@ meeting_system_backend/
 }
 ```
 
-- **功能描述**：取得instructions(說明文件) 或 latest_news(最新消息)下的類別。
+- **功能描述**：取得instructions(說明文件) 或 latest_news(最新消息) 或 全部 的子類別。
 - total: 用於前端。
 
 ---

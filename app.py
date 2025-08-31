@@ -148,11 +148,11 @@ def handle_categories():
                     return jsonify({'status': 400, 'message': '無法建立分類', 'success': False}), 400
         return create()
 
-@app.route('/api/categories/<int:category_id>', methods=['DELETE'])
+@app.route('/api/categories/<int:category_name>', methods=['DELETE'])
 @permission_required('manager')
-def handle_delete_category(category_id):
+def handle_delete_category(category_name):
     with DBHandler() as db:
-        success = db.delete_category(category_id)
+        success = db.delete_category(category_name)
         if success:
             return jsonify({'status': 200, 'message': '分類刪除成功', 'success': True})
         else:
@@ -167,65 +167,135 @@ def upload_file():
     專門用來處理檔案上傳的 API。
     接收一個 multipart/form-data 請求，其中包含一個名為 'file' 的檔案。
     """
-    if 'file' not in request.files:
+    if 'files' not in request.files:
         return jsonify({'status': 400, 'message': '請求中未包含檔案', 'success': False}), 400
     
-    files = request.files.getlist('files', [])
-    if files == []:
+    uploaded_files = request.files.getlist('files')
+    if not uploaded_files:
         return jsonify({'status': 400, 'message': '未選擇檔案', 'success': False}), 400
 
-    if files:
-        subfolder = request.form.get('subfolder')
+    file_records = []
+    try:
+        with DBHandler() as db:
+            for file in uploaded_files:
+                original_filename = secure_filename(file.filename)
+                subfolder = request.args.get("file_type")
+                
+                unique_filename = f"{uuid.uuid4().hex}_{original_filename}"
+                relative_path = os.path.join(subfolder, unique_filename).replace("\\", "/")
+                save_path = os.path.join(app.config['UPLOAD_FOLDER'], relative_path)
+                file.save(save_path)
 
-        attachments_list = []    
-        for file in files:
-            original_filename = secure_filename(file.filename)
-            unique_filename = f"{uuid.uuid4().hex}_{original_filename}"
-            save_path = os.path.join(app.config['UPLOAD_FOLDER'], subfolder, unique_filename)
-            file.save(save_path)
-
-            # 產生一個可以讓前端直接使用的公開 URL
-            # 注意：這需要您設定一個靜態檔案路由 (如下面的 /uploads/<path:filename>))
-            attachments_list.append({
-                            'path': url_for('serve_uploaded_file', filename=f"{subfolder}/{unique_filename}", _external=True),
-                            'original_filename': original_filename
-                        })
-
-        if subfolder in ['attachments','files']:
-            with DBHandler() as db:
-                success = db.upload_file(files)
-                if not success: return jsonify({'status': 500, 'message': '檔案上傳資料庫失敗', 'success': False}), 500
-
-        return jsonify({
-            'status': 201,
-            'message': '檔案上傳成功',
-            'url': attachments_list,
-            'success': True
-        }), 201
+                # 存入資料庫並取得 file_id
+                file_id = db.upload_file(relative_path, original_filename, subfolder)
+                if file_id:
+                    file_records.append({
+                        'id': file_id,
+                        'path': f"/uploads/{relative_path}",
+                        'original_filename': original_filename
+                    })
+    except Exception as e:
+        return jsonify({'status': 500, 'message': f"檔案處理時發生錯誤: {e}", 'success': False}), 500
     
-    return jsonify({'status': 500, 'message': '檔案上傳失敗', 'success': False}), 500
+    return jsonify({'status': 201, 'files': file_records, 'success': True}), 201
 
+@app.route('/api/files', methods=['GET'])
+def get_unattached_files_route():
+    """【新功能】取得所有未關聯到文章的檔案 (媒體庫)"""
+    try:
+        filters = {k: v for k, v in request.args.items() if k in ['post_id', 'file_type', 'original_filename']}
+        page_size = request.args.get('page_size', 10, type=int)
+        page = request.args.get('page', 1, type=int)
+        offset = (page - 1) * page_size
+        with DBHandler() as db:
+            files = db.get_files(filters=filters, page_size=page_size, offset=offset)
+
+            # 將 file_path 轉換為完整的 URL
+            for f in files:
+                f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+            return jsonify({'status': 200, 'files': files, 'success': True})
+    except Exception as e:
+        return jsonify({'status': 500, 'message': str(e), 'success': False}), 500
+
+@app.route('/api/files/<int:file_id>', methods=['DELETE'])
+@permission_required(['manager', 'editor'])
+def delete_file_route(file_id):
+    """【新功能】刪除單一檔案紀錄及其在伺服器上的實體檔案"""
+    try:
+        with DBHandler() as db:
+            # 權限檢查：只有 manager 或檔案擁有者可以刪除
+            owner_id = db.get_file_owner(file_id)
+            # 如果 owner_id 是 None，表示檔案未關聯或不存在，只有 manager 能刪除
+            if owner_id is not None and g.user['permission'] != 'manager' and g.user['id'] != owner_id:
+                 return jsonify({'status': 403, 'message': '權限不足，只能刪除自己文章中的檔案', 'success': False}), 403
+            
+            # 刪除實體檔案 (此為可選步驟，但建議執行)
+            # ... 這裡應加入根據 file_id 查詢 file_path 並從硬碟刪除檔案的邏輯 ...
+            file = db.get_file(file_id)
+            full_path_to_file = os.path.join(app.config['UPLOAD_FOLDER'], file["file_path"])
+            os.remove(full_path_to_file)
+
+            # 從資料庫刪除紀錄
+            success = db.delete_file(file_id)
+        
+        if success:
+            return jsonify({'status': 200, 'message': '檔案刪除成功', 'success': True})
+        else:
+            return jsonify({'status': 404, 'message': '找不到要刪除的檔案', 'success': False}), 404
+    except Exception as e:
+        return jsonify({'status': 500, 'message': str(e), 'success': False}), 500
 
 
 # --- Static File Route ---
-@app.route('/uploads/<path:filename>')
-def serve_uploaded_file(filename):
+# 當前端讀取到HTML的<img src=...>，就會自動向您的伺服器發送一個新的 GET 請求，請求的網址就是 /uploads/<path:filepath>
+@app.route('/uploads/<path:filepath>')
+def serve_uploaded_file(filepath):
     """提供一個路由來讓外界可以存取 uploads 資料夾中的檔案"""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filepath)
  
 
 # --- posts CURD ---
 @app.route('/api/posts', methods=['GET', 'POST'])
 def handle_posts():
     if request.method == 'GET':
-        filters = {k: v for k, v in request.args.items() if k in ['title_keyword', 'category_id', 'user_id']}
+        filters = {}
+        category_type = request.args.get('category_type')
+        if category_type:
+            with DBHandler() as db:
+                categories = db.get_categories_by_type(category_type)
+                filters['category_name'] = [c['name'] for c in categories]
+        else:
+            category_names = request.args.get('category_name')
+            if category_names:
+                filters['category_name'] = category_names
+
+        if request.args.get('title_keyword'):
+            filters['title_keyword'] = request.args.get('title_keyword')
+        if request.args.get('user_id'):
+            filters['user_id'] = request.args.get('user_id', type=int)
+        if request.args.get('status'):
+            filters['status'] = request.args.get('status')
+
         order_by = request.args.get('order_by', 'announcement_date', type=str)
         page_size = request.args.get('page_size', 10, type=int)
         page = request.args.get('page', 1, type=int)
         offset = (page - 1) * page_size
-        with DBHandler() as db:
-            posts = db.get_posts(filters=filters, order_by = order_by, page_size=page_size, offset=offset)
-            return jsonify({'status': 200, 'message': "success", 'result': posts, 'success': True})
+        try:
+            with DBHandler() as db:
+                posts = db.get_posts(filters=filters, order_by = order_by, page_size=page_size, offset=offset)
+                
+                for post in posts.get('rows', []):
+                    if post.get('attchments'):
+                        for f in post['attchments']:
+                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+
+                    if post.get('images'):
+                        for f in post['images']:
+                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                
+                return jsonify({'status': 200, 'result': posts, 'success': True})
+        except Exception as e:
+            return jsonify({'status': 500, 'message': str(e), 'success': False}), 500
 
     if request.method == 'POST':
         @permission_required(['manager', 'editor'])
@@ -239,7 +309,7 @@ def handle_posts():
             except json.JSONDecodeError:
                 return jsonify({'message': 'metadata 格式錯誤，無法解析為 JSON'}), 400
 
-            required = ['title', 'content', 'category_id']
+            required = ['title', 'content', 'category_name']
             if not data or not all(k in data for k in required):
                 return jsonify({'status': 400, 'message': f"缺少欄位: {required}", 'success': False}), 400
             
@@ -257,7 +327,7 @@ def handle_posts():
                     title=data['title'],
                     content=data['content'],
                     user_id=g.user['id'],
-                    category_id=data['category_id'],
+                    category_name=data['category_name'],
                     main_image_url=main_image_url,
                     # attachments=attachments_list,
                     hash_tags = hashtags_list
@@ -271,10 +341,25 @@ def handle_posts():
 @app.route('/api/posts/<int:post_id>', methods=['GET', 'PUT', 'DELETE'])
 def handle_post_by_id(post_id):
     if request.method == 'GET':
-        with DBHandler() as db:
-            post = db.get_post(post_id)
-            return jsonify({'status': 200, "message": "success", 'result': post, 'success': True}) if post else jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
+        try:
+            with DBHandler() as db:
+                post = db.get_post(post_id)
 
+            if post:
+                # 將檔案路徑轉換為完整的 URL
+                if post.get('attchments'):
+                    for f in post['attchments']:
+                        f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+
+                    if post.get('images'):
+                        for f in post['images']:
+                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                return jsonify({'status': 200, 'result': post, 'success': True})
+            else:
+                return jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
+        except Exception as e:
+            return jsonify({'status': 500, 'message': str(e), 'success': False}), 500
+        
     @permission_required(['manager', 'editor'])
     def protected_operation():
         with DBHandler() as db:
@@ -294,7 +379,7 @@ def handle_post_by_id(post_id):
                 except json.JSONDecodeError:
                     return jsonify({'message': 'metadata 格式錯誤，無法解析為 JSON'}), 400
 
-                required = ['title', 'content', 'category_id']
+                required = ['title', 'content', 'category_name']
                 if not data or not all(k in data for k in required):
                     return jsonify({'status': 400, 'message': f"缺少欄位: {required}", 'success': False}), 400
             
@@ -302,7 +387,7 @@ def handle_post_by_id(post_id):
                 update_data_for_db = {}
                 
                 # 處理基本欄位
-                for field in ['title', 'content', 'category_id']:
+                for field in required:
                     if field in data:
                         update_data_for_db[field] = data[field]
                 

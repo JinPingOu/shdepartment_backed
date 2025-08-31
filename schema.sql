@@ -6,15 +6,13 @@ posts,
 users,
 categories,
 hashtags CASCADE;
-DROP TYPE IF EXISTS user_permission;
--- 如果 ENUM 型別已存在，先刪除
-DROP TYPE IF EXISTS perental_category_type;
+DROP TYPE IF EXISTS user_permission, category_enum, post_status_enum, file_enum;
 -- 如果 ENUM 型別已存在，先刪除
 -- 建立一個自訂的 ENUM 型別來限制 permission 欄位的值
 CREATE TYPE user_permission AS ENUM ('manager', 'editor', 'viewer');
 CREATE TYPE category_enum AS ENUM ('latest_news', 'instructions');
 CREATE TYPE post_status_enum AS ENUM ('published', 'draft', 'archived');
--- 定義頂層分類的類型
+CREATE TYPE file_enum AS ENUM ('files', 'images', 'attachments');
 -- 使用者資料表 (增加帳號、密碼雜湊、權限)
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -46,24 +44,22 @@ CREATE TABLE posts (
     id SERIAL PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     content TEXT,
-    main_image_url VARCHAR(2083),
     user_id INT NOT NULL,
-    category_name VARCHAR(50) NOT NULL,
-    category_type category_enum NOT NULL,
+    category_name VARCHAR(50), -- 允許為空，以防分類被刪除
     status post_status_enum NOT NULL DEFAULT 'draft',
     click_count INT NOT NULL DEFAULT 0,
     -- 點擊計數，預設為 0
     announcement_date TIMESTAMP NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (category_id) REFERENCES categories(id)
+    -- ON UPDATE CASCADE 確保當 category 名稱更新時，這裡會自動同步
+    FOREIGN KEY (category_name) REFERENCES categories(name) ON UPDATE CASCADE ON DELETE SET NULL
 );
 -- 附件資料表
-CREATE TABLE attachments (
+CREATE TABLE files (
     id SERIAL PRIMARY KEY,
-    post_id INT NULL,
-    file_path VARCHAR(1024) NOT NULL,
+    post_id INT NULL, -- post id 初始為 NULL
+    file_type file_enum NOT NULL,
+    file_path VARCHAR(1024) NOT NULL UNIQUE, -- 【關鍵修正】儲存檔案的相對路徑，必須唯一
     original_filename VARCHAR(255),
     --- file_extension VARCHAR(10),
     FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
