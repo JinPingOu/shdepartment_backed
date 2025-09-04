@@ -294,7 +294,7 @@ class DBHandler:
                 sql = "SELECT id, post_id, file_type, file_path, original_filename FROM files WHERE id = %s"
                 cur.execute(sql, (file_id,))
                 result = cur.fetchone()
-                return [dict(result)] if result else None
+                return dict(result) if result else None
         except psycopg2.Error as e:
             print(f"取得檔案時發生錯誤: {e}")
             return None
@@ -452,10 +452,10 @@ class DBHandler:
                     self.conn.rollback()
                     return None
                 
-                cur.execute("SELECT id, file_path, original_filename FROM files WHERE post_id = %s AND file_type = 'attachments'"(post_id,))
+                cur.execute("SELECT id, file_path, original_filename FROM files WHERE post_id = %s AND file_type = 'attachments'", (post_id,))
                 result['attachments'] = cur.fetchall()
 
-                cur.execute("SELECT id, file_path, original_filename FROM files WHERE post_id = %s AND file_type = 'images'"(post_id,))
+                cur.execute("SELECT id, file_path, original_filename FROM files WHERE post_id = %s AND file_type = 'images'", (post_id,))
                 result['images'] = cur.fetchall()
 
                 cur.execute("SELECT t.tag_name FROM hashtags t JOIN post_hashtags pt ON t.id = pt.hashtag_id WHERE pt.post_id = %s;", (post_id,))
@@ -536,7 +536,7 @@ class DBHandler:
 
                 # 步驟 3: 一次性查詢所有相關的標籤
                 cur.execute("""
-                    SELECT pt.post_id, t.tag_name FROM hashtags t
+                    SELECT t.* FROM hashtags t
                     JOIN post_hashtags pt ON t.id = pt.hashtag_id
                     WHERE pt.post_id = ANY(%s);
                 """, (post_ids,))

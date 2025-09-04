@@ -187,17 +187,18 @@ def upload_file():
                 file.save(save_path)
 
                 # 存入資料庫並取得 file_id
-                file_id = db.upload_file(relative_path, original_filename, subfolder)
+                file_id = db.upload_file(save_path, original_filename, subfolder)
+                file_records = []
                 if file_id:
                     file_records.append({
                         'id': file_id,
-                        'path': f"/uploads/{relative_path}",
+                        'path': save_path,
                         'original_filename': original_filename
                     })
     except Exception as e:
         return jsonify({'status': 500, 'message': f"檔案處理時發生錯誤: {e}", 'success': False}), 500
     
-    return jsonify({'status': 201, 'files': file_records, 'success': True}), 201
+    return jsonify({'status': 200, 'message': 'upload success', 'files': file_records, 'success': True}), 200
 
 @app.route('/api/files', methods=['GET'])
 def get_unattached_files_route():
@@ -210,10 +211,7 @@ def get_unattached_files_route():
         with DBHandler() as db:
             files = db.get_files(filters=filters, page_size=page_size, offset=offset)
 
-            # 將 file_path 轉換為完整的 URL
-            for f in files:
-                f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
-            return jsonify({'status': 200, 'files': files, 'success': True})
+            return jsonify({'status': 200, 'message': 'success', 'files': files, 'success': True})
     except Exception as e:
         return jsonify({'status': 500, 'message': str(e), 'success': False}), 500
 
@@ -248,10 +246,21 @@ def delete_file_route(file_id):
 
 # --- Static File Route ---
 # 當前端讀取到HTML的<img src=...>，就會自動向您的伺服器發送一個新的 GET 請求，請求的網址就是 /uploads/<path:filepath>
-@app.route('/uploads/<path:filepath>')
-def serve_uploaded_file(filepath):
+@app.route('/uplo/<int:file_id>')
+def serve_uploaded_file(file_id):
     """提供一個路由來讓外界可以存取 uploads 資料夾中的檔案"""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filepath)
+    try:
+        with DBHandler() as db:
+            file = db.get_file(file_id)
+            folder = os.path.join(app.config['UPLOAD_FOLDER'], file['file_type'])
+            print(folder)
+            return send_from_directory(folder, os.path.split(file['file_path']))
+    except Exception as e:
+        return jsonify({
+                'status': 404,
+                'error': "檔案不存在",
+                'success': False
+            }), 404
  
 
 # --- posts CURD ---
@@ -284,14 +293,14 @@ def handle_posts():
             with DBHandler() as db:
                 posts = db.get_posts(filters=filters, order_by = order_by, page_size=page_size, offset=offset)
                 
-                for post in posts.get('rows', []):
-                    if post.get('attchments'):
-                        for f in post['attchments']:
-                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                # for post in posts.get('rows', []):
+                #     if post.get('attchments'):
+                #         for f in post['attchments']:
+                #             f['url'] = os.path.join(app.config['UPLOAD_FOLDER'], f['file_path'])
 
-                    if post.get('images'):
-                        for f in post['images']:
-                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                #     if post.get('images'):
+                #         for f in post['images']:
+                #             f['url'] = os.path.join(app.config['UPLOAD_FOLDER'], f['file_path'])
                 
                 return jsonify({'status': 200, 'result': posts, 'success': True})
         except Exception as e:
@@ -300,27 +309,24 @@ def handle_posts():
     if request.method == 'POST':
         @permission_required(['manager', 'editor'])
         def create():
-            # 1. 從 request.form 中取得 JSON 字串
-            metadata_str = request.form.get('metadata')
-            if not metadata_str:
-                return jsonify({'message': '缺少 metadata 欄位'}), 400
-            try:
-                data = json.loads(metadata_str)
-            except json.JSONDecodeError:
-                return jsonify({'message': 'metadata 格式錯誤，無法解析為 JSON'}), 400
-
-            required = ['title', 'content', 'category_name']
+            data = request.get_json()
+            
+            required = ['title', 'content', 'category_name', 'status']
             if not data or not all(k in data for k in required):
                 return jsonify({'status': 400, 'message': f"缺少欄位: {required}", 'success': False}), 400
             
             # 處理 main_image
-            soup = BeautifulSoup(data['content'], 'html.parser')
-            img_tag = soup.find('img')
-            main_image_url = img_tag['src'] if img_tag else None
+            # soup = BeautifulSoup(data['content'], 'html.parser')
+            # img_tag = soup.find('img')
+            # main_image_url = img_tag['src'] if img_tag else None
             # main_image_url = save_uploaded_file(request.files['main_image'], 'images') if 'main_image_url' in request.file else scrape_and_save_image(data.get('content'))
             
+            # 處理 hashtag
             hashtags_list = [f for f in data.get('hashtags', [])]
-            
+
+            # 處理 file id, main image 和 attachments放同個list
+            file_id_list = [f for f in data.get('file_ids', [])]
+
 
             with DBHandler() as db:
                 post_id = db.create_post(
@@ -328,9 +334,11 @@ def handle_posts():
                     content=data['content'],
                     user_id=g.user['id'],
                     category_name=data['category_name'],
-                    main_image_url=main_image_url,
+                    status = data['status'],
+                    # main_image_url=main_image_url,
                     # attachments=attachments_list,
-                    hash_tags = hashtags_list
+                    hash_tags = hashtags_list,
+                    file_ids = file_id_list
                     )
             if post_id:
                 return jsonify({'status': 200, 'message': "文章建立成功", 'id': post_id, 'success': True}), 201
@@ -347,13 +355,13 @@ def handle_post_by_id(post_id):
 
             if post:
                 # 將檔案路徑轉換為完整的 URL
-                if post.get('attchments'):
-                    for f in post['attchments']:
-                        f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                # if post.get('attchments'):
+                #     for f in post['attchments']:
+                #         f['url'] = os.path.join(app.config['UPLOAD_FOLDER'], f['file_path'])
 
-                    if post.get('images'):
-                        for f in post['images']:
-                            f['url'] = url_for('serve_uploaded_file', filename=f['file_path'], _external=True)
+                #     if post.get('images'):
+                #         for f in post['images']:
+                #            f['url'] = os.path.join(app.config['UPLOAD_FOLDER'], f['file_path'])
                 return jsonify({'status': 200, 'result': post, 'success': True})
             else:
                 return jsonify({'status': 404, 'message': '找不到文章', 'success': False}), 404
@@ -371,13 +379,7 @@ def handle_post_by_id(post_id):
                 return jsonify({'status': 403, 'message': '權限不足，只能操作自己的文章', 'success': False}), 403
 
             if request.method == 'PUT':
-                metadata_str = request.form.get('metadata')
-                if not metadata_str:
-                    return jsonify({'message': '缺少 metadata 欄位'}), 400
-                try:
-                    data = json.loads(metadata_str)
-                except json.JSONDecodeError:
-                    return jsonify({'message': 'metadata 格式錯誤，無法解析為 JSON'}), 400
+                data = request.get_json()
 
                 required = ['title', 'content', 'category_name']
                 if not data or not all(k in data for k in required):
@@ -392,9 +394,9 @@ def handle_post_by_id(post_id):
                         update_data_for_db[field] = data[field]
                 
                 # 處理主圖
-                soup = BeautifulSoup(data['content'], 'html.parser')
-                img_tag = soup.find('img')
-                main_image_url = img_tag['src'] if img_tag else None
+                # soup = BeautifulSoup(data['content'], 'html.parser')
+                # img_tag = soup.find('img')
+                # main_image_url = img_tag['src'] if img_tag else None
                 # update_data_for_db['main_image_url'] = save_uploaded_file(request.files['main_image'], 'images') if 'main_image_url' in request.file else scrape_and_save_image(data.get('content'))
                 
                 

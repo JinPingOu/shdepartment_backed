@@ -142,9 +142,9 @@ meeting_system_backend/
 ### 3. 刪除指定類別
 
 - **方法**：DELETE
-- **路徑**：`/api/categories/<int:category_id>`
+- **路徑**：`/api/categories/<string:category_name>`
 - **URL 參數**：
-  - `category_id`（int, 必填）：類別 ID
+  - `category_name`（str, 必填）：類別名
 - **回傳格式**：
 
 ```json
@@ -159,16 +159,123 @@ meeting_system_backend/
 
 ---
 
+### 上傳檔案
+### 1. 上傳檔案
+
+- **方法**：POST
+- **路徑**：`/api/upload`
+- **Body**：`multipart/form`
+  - `files`（file list, 必填）： 補助文件
+  - `file_type`: images(主視覺圖) 或 attachments(附件) 或 files(補助文件)  
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "upload success",
+  "file_records": [
+    {
+      "id": 123,
+      "path": "/uploads/files/123_test.pdf",
+      "original_filename": "test.pdf"
+    }
+  ], 
+  "success": true
+}
+```
+
+- **功能描述**：上傳補助文件，或在新增公告的頁面，選擇上傳主視覺圖或附件，前端再儲存id成list傳給/api/posts做新增posts，注意因為怕重複文件存入檔名會變。
+
+---
+
+### 2. 取得某公告/某特定檔名/全部的主視覺圖或附件 或 取得某特定檔名/全部的補助文件
+
+- **方法**：GET
+- **路徑**：`/api/files`
+- **Query 參數**：
+  - `post_id`（int, 選填）：主視覺圖或附件所屬的公告 ID 或 補助文件不用填 (None)
+  - `file_type`（int, 選填）：類別名 - images(主視覺圖) /attachments(附件) /files(補助文件)
+  - `original_filename`（int, 選填）：上傳時的檔案標題名稱 (考慮要不要刪掉 或 改成關鍵字搜尋)
+  - `page`（int, 選填，預設 1）：分頁頁碼
+  - `page_size`（int, 選填，預設 10）：每頁筆數
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {
+    "rows": [
+      {
+        "id": 1,
+        "post_id": 123,
+        "file_type": "attachments",
+        "file_path": "./uploads/attachments/123_test.pdf",
+        "original_filename": "test.pdf"
+      }
+    ],
+    "total": 100
+  },
+  "success": true
+}
+```
+
+- **功能描述**：分頁取得某公告/某特定檔名/全部的主視覺圖或附件 或 取得某特定檔名/全部的補助文件 (/api/posts也可以取得images/attachments)。
+- total: 用於前端分頁用。
+
+---
+
+### 3. 刪除指定的附件/主視覺圖/補助文件
+
+- **方法**：DELETE
+- **路徑**：`/api/posts/<int:file_id>`
+- **URL 參數**：
+  - `file_id`（int, 必填）：要刪除的附件/主視覺圖/補助文件
+- **回傳格式**：
+
+```json
+{
+  "status": 200,
+  "message": "檔案刪除成功",
+  "success": true
+}
+```
+
+- **功能描述**：刪除指定的附件/主視覺圖/補助文件。
+
+
+---
+
+### 4. 下載附件/主視覺圖/補助文件
+
+- **方法**：GET
+- **路徑**：`/api/download/files/<int:file_id>`
+- **Param 參數**：
+  - file_id（int, 必填）：附件/主視覺圖/補助文件 ID
+- **回傳格式**：
+
+```url
+`./static/slides/2025/test.pdf`
+```
+
+- **功能描述**：取得附件/主視覺圖/補助文件url。(考慮刪掉這個或get中的url)
+
+---
+
+
+
 ### 公告
-### 1. 取得某標題/某類別/某發布者/全部的公告
+### 1. 取得某標題/某父子類別/某發布者/某狀態/全部的公告
 
 - **方法**：GET
 - **路徑**：`/api/posts`
 - **Query 參數**：
+  - `category_type` (str, 選填) : 父類別名 ("latest_news" 或 "instructions")
+  - `category_name`（str, 選填）：類別名
   - `title_keyword`（str, 選填）：搜尋標題的關鍵字
-  - `category_id`（int, 選填）：類別 ID
   - `user_id`（int, 選填）：公告發布者 ID
-  - `order_by`(str, 選填) :排序方式 ("announcement_date" 或 "click_count")
+  - `status` (str, 選填) : 公告狀態 ('published' 或 'draft' 或 'archived')
+  - `order_by`(str, 選填) :排序方式 ("announcement_date" 或 "click_count", 預設announcement_date)
   - `page`（int, 選填，預設 1）：分頁頁碼
   - `page_size`（int, 選填，預設 10）：每頁筆數
 - **回傳格式**：
@@ -183,11 +290,35 @@ meeting_system_backend/
         "id": 1,
         "title": "人資 Q&A 助手 - 說明文件",
         "content": "<h1>...</h1>",
-        "main_image_url": "image.png",
         "user_id": 1,
-        "catrgory_id": 2,
+        "catrgory_name": "人資 Q&A 助手",
+        "status": "draft",
         "click_count": 13,
-        "announcement_date" "2025-08-27 11:57"
+        "announcement_date": "2025-08-27 11:57",
+        "attachments":[
+          {
+            "id": 1,
+            "post_id": 123,
+            "file_type": "attachments",
+            "file_path": "./uploads/attachments/123_test.pdf",
+            "original_filename": "test.pdf"
+          } 
+        ],
+        "images": [
+          {
+            "id": 1,
+            "post_id": 123,
+            "file_type": "attachments",
+            "file_path": "./uploads/attachments/123_test.pdf",
+            "original_filename": "test.pdf"
+          }
+        ],
+        "hashtags": [
+          {
+            "id": 1,
+            "tag_name": "QA"
+          }
+        ]
       }
     ],
     "total": 100
@@ -196,7 +327,7 @@ meeting_system_backend/
 }
 ```
 
-- **功能描述**：分頁取得某標題/某類別/某發布者的公告。
+- **功能描述**：分頁取得某標題/某父子類別/某發布者/某狀態/全部的公告。
 - total: 用於前端分頁用。
 
 ---
@@ -205,14 +336,14 @@ meeting_system_backend/
 
 - **方法**：POST
 - **路徑**：`/api/posts`
-- **Body**：`multipart/form`
-  - `main_image_url`（file, 選填）：主視覺圖
-  - `attachments`（file list, 選填）: 公告附檔列表
-  - `metadata`: 
-    - `title`（str, 必填）：搜尋標題的關鍵字
-    - `content`（str, 必填）：類別 ID
-    - `category_id`（str, 必填）：類別 ID
+- **Body**：`application/json`
+    - `title`（str, 必填）：公告標題
+    - `content`（str, 必填）：公告內容
+    - `category_name`（str, 必填）：子類別名
+    - `status` (str, 必填) : 公告狀態 ('published' 或 'draft' 或 'archived', 預設draft)
     - `hashtags`（str list, 選填）：標籤列表
+    - `file_ids` (int list, 選填) : 附件/主視覺圖 list
+
 - **回傳格式**：
 
 ```json
@@ -244,11 +375,35 @@ meeting_system_backend/
     "id": 1,
     "title": "人資 Q&A 助手 - 說明文件",
     "content": "<h1>...</h1>",
-    "main_image_url": "image.png",
     "user_id": 1,
-    "catrgory_id": 2,
+    "catrgory_name": "人資 Q&A 助手",
+    "status": "draft",
     "click_count": 13,
-    "announcement_date" "2025-08-27 11:57"
+    "announcement_date": "2025-08-27 11:57",
+    "attachments":[
+      {
+        "id": 1,
+        "post_id": 123,
+        "file_type": "attachments",
+        "file_path": "./uploads/attachments/123_test.pdf",
+        "original_filename": "test.pdf"
+      } 
+    ],
+    "images": [
+      {
+        "id": 1,
+        "post_id": 123,
+        "file_type": "attachments",
+        "file_path": "./uploads/attachments/123_test.pdf",
+        "original_filename": "test.pdf"
+      }
+    ],
+    "hashtags": [
+      {
+        "id": 1,
+        "tag_name": "QA"
+      }
+    ]
   },
   "success": true
 }
@@ -262,15 +417,13 @@ meeting_system_backend/
 - **路徑**：`/api/posts/<int:post_id>`
 - **URL 參數**：
   - `post_id`（int, 必填）：更新某公告的ID
-- **Body**：`multipart/form`
-  - `main_image_url`（file, 選填）：主視覺圖
-  - `attachments`（file list, 選填）: 公告附檔列表
-  - `metadata`: 
-    - `title`（str, 必填）：搜尋標題的關鍵字
-    - `content`（str, 必填）：類別 ID
-    - `category_id`（str, 必填）：類別 ID
+- **Body**：`application/json`
+    - `title`（str, 必填）：公告標題
+    - `content`（str, 必填）：公告內容
+    - `category_name`（str, 必填）：子類別名
+    - `status` (str, 必填) : 公告狀態 ('published' 或 'draft' 或 'archived', 預設draft)
     - `hashtags`（str list, 選填）：標籤列表
-- **回傳格式**：
+    - `file_ids` (int list, 選填) : 附件/主視覺圖 list
 
 ```json
 {
@@ -288,7 +441,7 @@ meeting_system_backend/
 - **方法**：DELETE
 - **路徑**：`/api/posts/<int:post_id>`
 - **URL 參數**：
-  - `post_id`（int, 必填）：更新某公告的ID
+  - `post_id`（int, 必填）：刪除公告的ID
 - **回傳格式**：
 
 ```json
