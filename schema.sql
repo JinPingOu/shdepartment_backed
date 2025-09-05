@@ -29,6 +29,26 @@ CREATE TABLE users (
         account ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$'
     )
 );
+
+-- 【新功能】使用者活動日誌資料表
+CREATE TABLE user_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL,
+    action_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    action VARCHAR(50) NOT NULL, -- e.g., 'login', 'create_post', 'view_post'
+    details JSONB, -- 儲存詳細資訊，例如存取的 post_id 或搜尋條件
+    ip_address VARCHAR(45), -- 儲存使用者的 IP 位址
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+-- 【新功能】Refresh Tokens 資料表
+CREATE TABLE refresh_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL,
+    token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 -- 【新】單一分類資料表
 CREATE TABLE categories (
     name VARCHAR(50) NOT NULL PRIMARY KEY,

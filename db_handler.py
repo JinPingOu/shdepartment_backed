@@ -3,8 +3,9 @@ import psycopg2.extras
 import os
 import hashlib
 from dotenv import load_dotenv
-from datetime import date
+from datetime import date, datetime
 import re
+import json
 
 # 載入 .env 檔案中的環境變數
 load_dotenv()
@@ -54,6 +55,9 @@ class DBHandler:
     def find_user(self, user_id=None, account=None):
         """根據 ID 或帳號尋找使用者"""
         if not user_id and not account: return None
+        if user_id and account:
+            print("could not find id and account at the same time")
+            return None
         try:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if user_id:
@@ -77,6 +81,19 @@ class DBHandler:
         except psycopg2.Error as e:
             print(f"獲取權限時發生錯誤: {e}")
             return None
+        
+    def check_password(self, account, password):
+        """【新功能】檢查帳號密碼是否正確"""
+        user = self.find_user(account=account)
+        if not user:
+            return None
+        
+        password_hash = self._hash_password(password)
+        if password_hash == user['password_hash']:
+            # 不回傳密碼雜湊
+            user.pop('password_hash', None)
+            return user
+        return None
 
     def _hash_password(self, password):
         """使用 SHA-256 對密碼進行雜湊"""
@@ -106,6 +123,59 @@ class DBHandler:
             print(f"新增使用者時發生錯誤: {e}")
             self.conn.rollback()
             return None
+    
+    # --- 【新功能】Refresh Token Management ---
+    def store_refresh_token(self, user_id, token, expires_at):
+        """儲存 Refresh Token 到資料庫"""
+        try:
+            with self.conn.cursor() as cur:
+                sql = "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (%s, %s, %s);"
+                cur.execute(sql, (user_id, token, expires_at))
+            self.conn.commit()
+            return True
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            print(f"儲存 Refresh Token 時發生錯誤: {e}")
+            return False
+
+    def validate_refresh_token(self, token):
+        """驗證 Refresh Token 是否有效且未過期"""
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                sql = "SELECT user_id FROM refresh_tokens WHERE token = %s AND expires_at > %s;"
+                cur.execute(sql, (token, datetime.now(datetime.timezone.utc)))
+                result = cur.fetchone()
+                return result['user_id'] if result else None
+        except psycopg2.Error as e:
+            print(f"驗證 Refresh Token 時發生錯誤: {e}")
+            return None
+
+    def delete_refresh_token(self, token):
+        """從資料庫中刪除 Refresh Token (用於登出)"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM refresh_tokens WHERE token = %s;", (token,))
+            self.conn.commit()
+            return True
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            print(f"刪除 Refresh Token 時發生錯誤: {e}")
+            return False    
+
+    # --- User Logging ---
+    def create_log(self, user_id, action, details=None, ip_address=None):
+        """新增一筆使用者活動日誌"""
+        try:
+            with self.conn.cursor() as cur:
+                details_json = json.dumps(details) if details is not None else None
+                sql = "INSERT INTO user_logs (user_id, action, details, ip_address) VALUES (%s, %s, %s, %s);"
+                cur.execute(sql, (user_id, action, details_json, ip_address))
+            self.conn.commit()
+            return True
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            print(f"新增日誌時發生錯誤: {e}")
+            return False
         
     def delete_user(self, user_id):
         """刪除使用者"""
@@ -123,21 +193,7 @@ class DBHandler:
             self.conn.rollback()
             return False
         
-    def find_user(self, user_id=None, account=None):
-        """根據 ID 或帳號尋找使用者"""
-        if not user_id and not account: return None
-        try:
-            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if user_id:
-                    cur.execute("SELECT id, name, account, permission, department, campus FROM users WHERE id = %s;", (user_id,))
-                else:
-                    cur.execute("SELECT id, name, account, permission, department, campus FROM users WHERE account = %s;", (account,))
-                user = cur.fetchone()
-                return dict(user) if user else None
-        except psycopg2.Error as e:
-            print(f"尋找使用者時發生錯誤: {e}")
-            return None
-        
+
     def update_user(self, user_id, new_data):
         """更新使用者資料 (不包含密碼和帳號)"""
         fields = ['name', 'permission', 'department', 'campus']

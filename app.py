@@ -1,7 +1,7 @@
 from db_handler import DBHandler
 from flask import Flask, jsonify, request, send_from_directory, g, url_for
 from flask_cors import CORS
-from datetime import datetime, date
+from datetime import datetime, timedelta, timezone
 import os
 import uuid
 from werkzeug.utils import secure_filename
@@ -12,14 +12,23 @@ import re
 import binascii
 from functools import wraps
 import json
+import jwt
+from dotenv import load_dotenv
+
 
 app = Flask(__name__)
 CORS(app)
-
+load_dotenv()
 
 app.config['APPLICATION_ROOT'] = 'sh-department-api'
 app.config['DOCUMENT_FOLDER'] = './static/'
 app.config['JSON_AS_ASCII'] = False
+
+# --- 【關鍵】JWT 設定 ---
+# 這個密鑰在正式環境中，絕對不能寫死在程式碼裡，應該從環境變數讀取
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(minutes=15)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=7)
 
 # --- File Upload Configuration ---
 UPLOAD_FOLDER = './uploads/'
@@ -88,31 +97,72 @@ os.makedirs(os.path.join(UPLOAD_FOLDER, 'files'), exist_ok=True)
 #         print(f"抓取圖片失敗: {e}")
 #         return None
 
+# --- 【新】JWT 權杖驗證裝飾器 ---
+# def token_required(f):
+#     @wraps(f)
+#     def decorated(*args, **kwargs):
+#         token = None
+#         # 檢查 'Authorization' 標頭是否存在，並以 'Bearer ' 開頭
+#         if 'Authorization' in request.headers:
+#             auth_header = request.headers['Authorization']
+#             try:
+#                 token = auth_header.split(" ")[1]
+#             except IndexError:
+#                 return jsonify({'status': 401, 'message': '無效的 Token 格式', 'success': False}), 401
+        
+#         if not token:
+#             return jsonify({'status': 401, 'message': '未提供 Token', 'success': False}), 401
 
-# --- Permission Decorator (安全驗證) ---
-def permission_required(required_permissions):
-    if isinstance(required_permissions, str):
+#         try:
+#             # 解碼並驗證 Token
+#             payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+#             # 將使用者資訊存入 g，方便後續路由使用
+#             g.user = {'id': payload['sub'], 'permission': payload['permission']}
+#         except jwt.ExpiredSignatureError:
+#             return jsonify({'status': 401, 'message': 'Token 已過期', 'success': False}), 401
+#         except jwt.InvalidTokenError:
+#             return jsonify({'status': 401, 'message': '無效的 Token', 'success': False}), 401
+        
+#         return f(*args, **kwargs)
+#     return decorated
+
+
+def token_required(required_permissions=None):
+    if required_permissions is None:
+        required_permissions = []
+    elif isinstance(required_permissions, str):
         required_permissions = [required_permissions]
+
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            user_id = request.headers.get('X-User-ID')
-            if not user_id:
-                return jsonify({'status': 401, 'message': '未提供使用者身分 (缺少 X-User-ID 標頭)', 'success': False}), 401
+            token = None
+            if 'Authorization' in request.headers:
+                auth_header = request.headers['Authorization']
+                try:
+                    token = auth_header.split(" ")[1]
+                except IndexError:
+                    return jsonify({'status': 401, 'message': '無效的 Token 格式 (應為 Bearer <token>)', 'success': False}), 401
+            
+            if not token:
+                return jsonify({'status': 401, 'message': '未提供 Token', 'success': False}), 401
+
             try:
-                with DBHandler() as db:
-                    user = db.find_user(user_id=int(user_id))
-                if not user:
-                    return jsonify({'status': 401, 'message': '無效的使用者 ID', 'success': False}), 401
-                g.user = user
-                if user['permission'] not in required_permissions and user['permission'] != 'manager':
+                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+                g.user = {'id': payload['sub'], 'permission': payload['permission']}
+
+                # 【新】在這裡直接進行權限等級檢查
+                if required_permissions and g.user['permission'] not in required_permissions:
                     return jsonify({'status': 403, 'message': f"權限不足，此操作需要 {required_permissions} 等級。", 'success': False}), 403
-            except Exception as e:
-                return jsonify({'status': 500, 'message': f"驗證使用者身分時發生錯誤: {e}", 'success': False}), 500
+
+            except jwt.ExpiredSignatureError:
+                return jsonify({'status': 401, 'message': 'Token 已過期', 'success': False}), 401
+            except jwt.InvalidTokenError:
+                return jsonify({'status': 401, 'message': '無效的 Token', 'success': False}), 401
+            
             return f(*args, **kwargs)
         return decorated_function
     return decorator
-        
 
 @app.route('/api/test')
 def index():
@@ -123,6 +173,83 @@ def index():
         'success': True
     }), 200
 
+# --- 【新功能】Login Route ---
+@app.route('/api/login', methods=['POST'])
+def login_route():
+    data = request.get_json()
+    if not data or not data.get('account') or not data.get('password'):
+        return jsonify({'status': 400, 'message': '缺少帳號或密碼', 'success': False}), 400
+
+    with DBHandler() as db:
+        user = db.check_password(data['account'], data['password'])
+        if user:
+            access_token_payload = {
+                'sub': user['id'],
+                'permission': user['permission'],
+                'iat': datetime.now(timezone.utc),                                              # create
+                'exp': datetime.now(timezone.utc) + app.config['JWT_ACCESS_TOKEN_EXPIRES']      # access expire
+            }
+            access_token = jwt.encode(access_token_payload, app.config['SECRET_KEY'], algorithm="HS256")
+
+            refresh_token = str(uuid.uuid4())
+            refresh_token_exp = datetime.now(timezone.utc) + app.config['JWT_REFRESH_TOKEN_EXPIRES']    # refresh expire
+            db.store_refresh_token(user['id'], refresh_token, refresh_token_exp)
+            
+            db.create_log(user['id'], 'login', ip_address=request.remote_addr)
+
+            return jsonify({
+                'status': 200,
+                'message': '登入成功',
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'success': True
+            })
+        else:
+            return jsonify({'status': 401, 'message': '帳號或密碼錯誤', 'success': False}), 401
+
+@app.route('/api/refresh', methods=['POST'])
+def refresh_route():
+    data = request.get_json()
+    refresh_token = data.get('refresh_token')
+    if not refresh_token:
+        return jsonify({'status': 400, 'message': '未提供 Refresh Token', 'success': False}), 400
+        
+    with DBHandler() as db:
+        user_id = db.validate_refresh_token(refresh_token)
+        if user_id:
+            user = db.find_user(user_id=user_id)
+            access_token_payload = {
+                'sub': user['id'],
+                'permission': user['permission'],
+                'iat': datetime.now(timezone.utc),
+                'exp': datetime.now(timezone.utc) + app.config['JWT_ACCESS_TOKEN_EXPIRES']
+            }
+            access_token = jwt.encode(access_token_payload, app.config['SECRET_KEY'], algorithm="HS256")
+            
+            return jsonify({'status': 200, 'access_token': access_token, 'success': True})
+        else:
+            return jsonify({'status': 401, 'message': '無效或已過期的 Refresh Token', 'success': False}), 401
+
+@app.route('/api/logout', methods=['POST'])
+def logout_route():
+    data = request.get_json()
+    refresh_token = data.get('refresh_token')
+    user_id = data.get('id')
+    if refresh_token:
+        with DBHandler() as db:
+            db.delete_refresh_token(refresh_token)
+            db.create_log(user_id, 'logout', ip_address=request.remote_addr)
+    return jsonify({'status': 200, 'message': '登出成功', 'success': True})
+
+@app.route('/api/signup', method=['POST'])
+def signup_route():
+    return None
+
+@app.route('/api/signout', method=['DELETE'])
+def signup_route():
+    return None
+
+
 # --- category CURD ---
 
 # 新增父分類: 要手動新增enum type
@@ -132,6 +259,7 @@ def handle_categories():
         category_type = request.args.get('category_type')
         with DBHandler() as db:
             categories = db.get_categories_by_type(category_type)
+            
             return jsonify({'status': 200, 'message': "success", 'result': categories, 'success': True})
 
     if request.method == 'POST':
